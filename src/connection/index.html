@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="../assets/bootstrap-5.3.0-alpha1-dist/css/bootstrap.min.css"
+    />
+    <style>
+      .coming-soon {
+        background-color: white;
+        height: 100vh;
+      }
+
+      .coming-soon-content {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
+      }
+
+      .coming-soon-title {
+        font-size: 50px;
+        font-weight: 700;
+        color: #000;
+      }
+
+      .coming-soon-text {
+        font-size: 20px;
+        font-weight: 400;
+        color: #000;
+        margin-top: 20px;
+      }
+
+      .coming-soon-image {
+        margin-top: 20px;
+      }
+
+      .center {
+        display: block;
+        margin-left: auto;
+        margin-right: auto;
+        width: 50%;
+      }
+      .loader {
+        border: 16px solid #f3f3f3;
+        border-radius: 50%;
+        border-top: 16px solid #3498db;
+        width: 120px;
+        height: 120px;
+        -webkit-animation: spin 2s linear infinite; /* Safari */
+        animation: spin 2s linear infinite;
+        margin-bottom: 20px;
+      }
+
+      /* Safari */
+      @-webkit-keyframes spin {
+        0% {
+          -webkit-transform: rotate(0deg);
+        }
+        100% {
+          -webkit-transform: rotate(360deg);
+        }
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="coming-soon">
+        <div class="coming-soon-content">
+          <div class="coming-soon-title">
+            <h1>Oh tidak!</h1>
+          </div>
+          <div class="coming-soon-text">
+            <p>
+              Koneksi Internet Anda terputus. Harap periksa koneksi Internet
+              Anda.
+            </p>
+          </div>
+          <div class="loader"></div>
+          <p id="recon">Recconecting...</p>
+          <div class="coming-soon-image">
+            <img
+              class="center"
+              src="../assets/img/nomokit.png"
+              alt="coming-soon"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/bootstrap-5.3.0-alpha1-dist/js/bootstrap.min.js"></script>
+    <script>
+      const recon = document.getElementById("recon");
+      let count = 0;
+      let max = 5;
+
+      function startTime() {
+        const today = new Date();
+        let h = today.getHours();
+        let m = today.getMinutes();
+        let s = today.getSeconds();
+        m = checkTime(m);
+        s = checkTime(s);
+        count++;
+        if (count > max) {
+          recon.innerHTML = "Reconnecting";
+          count = 0;
+        } else {
+          recon.innerHTML = "Reconnecting" + ".".repeat(count);
+        }
+        setTimeout(startTime, 1000);
+      }
+
+      function checkTime(i) {
+        if (i < 10) {
+          i = "0" + i;
+        } // add zero in front of numbers < 10
+        return i;
+      }
+      document.addEventListener("DOMContentLoaded", function () {
+        startTime();
+      });
+    </script>
+  </body>
+</html>

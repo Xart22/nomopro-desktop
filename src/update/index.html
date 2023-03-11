@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="../assets/bootstrap-5.3.0-alpha1-dist/css/bootstrap.min.css"
+    />
+  </head>
+  <style>
+    .coming-soon {
+      background-color: #f7fafc;
+      height: 100vh;
+    }
+
+    .coming-soon-content {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100%;
+    }
+
+    .coming-soon-title {
+      font-size: 50px;
+      font-weight: 700;
+      color: #000;
+    }
+
+    .coming-soon-text {
+      font-size: 20px;
+      font-weight: 400;
+      color: #000;
+      margin-top: 20px;
+    }
+
+    .coming-soon-image {
+      margin-top: 20px;
+      padding: 20px;
+      width: 100%;
+    }
+
+    .center {
+      display: block;
+      margin-left: auto;
+      margin-right: auto;
+      width: 50%;
+    }
+  </style>
+  <body>
+    <div class="container">
+      <div class="coming-soon">
+        <div class="coming-soon-content">
+          <div class="coming-soon-title">
+            <h1>Downloading Update</h1>
+          </div>
+          <div class="coming-soon-text"></div>
+          <div class="coming-soon-image">
+            <div class="progress">
+              <div
+                id="progress-bar"
+                class="progress-bar progress-bar-striped progress-bar-animated"
+                role="progressbar"
+                aria-valuenow="5"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                style="width: 1%"
+              >
+                100%
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/bootstrap-5.3.0-alpha1-dist/js/bootstrap.min.js"></script>
+  </body>
+</html>

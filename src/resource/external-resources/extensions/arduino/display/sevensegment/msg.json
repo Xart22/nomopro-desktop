@@ -1,0 +1,7 @@
+{
+    "SEVENSEGMENT_CATEGORY": "Seven Segments Display",
+    "SEVENSEGMENT_INIT": "init sevent segments",
+    "SEVENSEGMENT_SHOWDIGIT": "show digit function sevent segments",
+    "SEVENSEGMENT_SHOW": "show digit %1",
+    "SEVENSEGMENT_SETUP": "setup seven segments"
+}

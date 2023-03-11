@@ -1,0 +1,8 @@
+{
+    "HX711_CATEGORY": "HX711",
+    "HX711_INIT": "init HX711 DOUT %1 CLK %2",
+    "HX711_GETUNITS": "HX711 get units",
+    "HX711_SETSCALE": "HX711 set scale calibration factor %1",
+    "HX711_TARE": "HX711 tare",
+    "HX711_READAVERAGE": "HX711 read average"
+}

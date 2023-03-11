@@ -1,0 +1,6 @@
+{
+    "GPRS_CATEGORY": "GSM Module",
+    "GPRS_INIT": "init gsm",
+    "GPRS_PREINIT": "preinit gsm",
+    "GPRS_SENDSMS": "gsm send to number %1 message %2"
+}

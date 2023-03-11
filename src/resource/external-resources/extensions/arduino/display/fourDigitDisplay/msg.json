@@ -1,0 +1,17 @@
+{
+    "FOURDIGITCLOCKDISPLAY_CATEGORY": "4-Digit Display",
+    "FOURDIGITCLOCKDISPLAY_CLEAR": "clear 4-digit  display",
+    "FOURDIGITCLOCKDISPLAY_DISPLAY": "4-digit  display show %1 at bit %2",
+    "FOURDIGITCLOCKDISPLAY_DISPLAYNUMBER": "4-digit  display show number %1",
+    "FOURDIGITCLOCKDISPLAY_DISPLAYSTRING": "4-digit  display show string %1",
+    "FOURDIGITCLOCKDISPLAY_INIT": "init 4-digit  display pin DIO %1 CLK %2",
+    "FOURDIGITCLOCKDISPLAY_SETBRIGHTNESS": "set 4-digit  display brightness %1",
+    "FOURDIGITCLOCKDISPLAY_SETPOINT": "4-digit  display set point %1",
+    "FOURDIGITCLOCKDISPLAY_SETPOINT_TOOLTIP": "It will take effect after the next update of the display.",
+    "FOURDIGITCLOCKDISPLAY_STATE_OFF": "off",
+    "FOURDIGITCLOCKDISPLAY_STATE_ON": "on",
+    "DISPLAYFOURDIGITDISPLAY_INIT": "init 4-digit display clk %1 dio %2",
+    "DISPLAYFOURDIGITDISPLAY_SEGMENT": "write seg %1 value %2 description %3",
+    "DISPLAYFOURDIGITDISPLAY_TEST": "run all test four digit display",
+    "DISPLAYFOURDIGITDISPLAY_SHOW": "show segment %1 display"
+}

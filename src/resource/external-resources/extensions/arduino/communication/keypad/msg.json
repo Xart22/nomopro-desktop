@@ -1,0 +1,5 @@
+{
+    "KEYPAD_CATEGORY": "KEYPAD",
+    "KEYPAD_INIT": "init keypad",
+    "KEYPAD_GETKEY": "Keypad get key"
+}

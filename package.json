@@ -9,7 +9,7 @@
     "deploy": "electron-builder -p always",
     "build": "electron-builder"
   },
-  "repository": "https://github.com/Xart22/nompro-desktop",
+  "repository": "https://github.com/Xart22/nomopro-desktop",
   "publish": {
     "provider": "github",
     "releaseType": "release"

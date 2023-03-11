@@ -1,0 +1,7 @@
+{
+    "RFID_CATEGORY": "RFID",
+    "RFID_INIT": "init RFID pin SDA %1 pin reset %2",
+    "RFID_ISCARD": "read RFID isCard",
+    "RFID_READCARDSERIAL": "RFID read card serial",
+    "RFID_SERIALNUM": "RFID serial number %1"
+}

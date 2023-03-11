@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="../assets/bootstrap-5.3.0-alpha1-dist/css/bootstrap.min.css"
+    />
+    <link rel="stylesheet" href="./index.css" />
+  </head>
+  <body>
+    <main>
+      <div class="container mt-5">
+        <div class="row justify-content-center">
+          <div class="col-md-6">
+            <div class="card">
+              <div class="card-body">
+                <div class="logo-wraper p-5">
+                  <h2 class="text-center" style="font-weight: bold">
+                    Welcome To Nomobase Desktop
+                  </h2>
+                </div>
+
+                <div class="mb-2">
+                  <label for="email" class="form-label">Email address</label>
+                  <input
+                    type="email"
+                    class="form-control"
+                    id="email"
+                    name="email"
+                    value=""
+                    required
+                  />
+                </div>
+                <div class="mb-3">
+                  <label for="password" class="form-label">Password</label>
+                  <input
+                    type="password"
+                    class="form-control"
+                    id="password"
+                    name="password"
+                    required
+                  />
+                </div>
+
+                <div class="alert alert-danger mb-3" id="error"></div>
+
+                <button type="submit" id="login" class="btn btn-primary w-100">
+                  Login
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script src="../assets/bootstrap-5.3.0-alpha1-dist/js/bootstrap.min.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+# npm file
+node_modules/
+# Binary tools
+tools/
+firmwares/
+dist/
+.openblockData/
