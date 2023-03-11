@@ -151,8 +151,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
 
 
 
-var onClickLogo = function onClickLogo() {
-  window.location = "https://nomo-kit.com";
+var onClickLogo = function onClickLogo() {//window.location = "https://nomo-kit.com";
 };
 
 var onClickCheckUpdate = function onClickCheckUpdate() {
