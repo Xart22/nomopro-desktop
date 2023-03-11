@@ -15,6 +15,8 @@ const { autoUpdater, AppUpdater } = require("electron-updater");
 
 logger.transports.file.level = "info";
 autoUpdater.logger = logger;
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = false;
 
 const socket = io("http://15.235.140.95:2023", {
   reconnection: true,
@@ -177,7 +179,7 @@ const createWindow = () => {
   logger.info(socket.connected);
   win.loadFile(path.join(__dirname, "/src/connection/index.html"));
 
-  win.webContents.openDevTools();
+  //win.webContents.openDevTools();
 
   ipcMain.on("login", async (event, arg) => {
     console.log(arg);
@@ -268,15 +270,46 @@ app.whenReady().then(() => {
 });
 
 app.on("ready", async () => {
-  console.log("ready");
-  //  END: Link server
-  // Check Update
   autoUpdater.checkForUpdatesAndNotify();
-  //  END: Check Update
-  //  START: Resource server
-  //  END: Resource server
+  autoUpdater.on("update-available", () => {
+    dialog
+      .showMessageBox({
+        type: "question",
+        title: "Update available",
+        message: "Update Version is available",
+        buttons: ["Yes", "No"],
+        yes: 0,
+        no: 1,
+      })
+      .then((result) => {
+        if (result.response === 0) {
+          win.loadFile(path.join(__dirname, "/src/update/index.html"));
+          autoUpdater.downloadUpdate();
+        }
+      });
+  });
   autoUpdater.on("update-downloaded", () => {
-    autoUpdater.quitAndInstall(false, true);
+    dialog
+      .showMessageBox({
+        type: "question",
+        title: "Update available",
+        message: "Update is downloaded, will be installed on restart",
+        buttons: ["Yes", "No"],
+        yes: 0,
+        no: 1,
+      })
+      .then((result) => {
+        if (result.response === 0) {
+          app.exit();
+          autoUpdater.quitAndInstall(false, false);
+        }
+      });
+  });
+  autoUpdater.on("error", (err) => {
+    dialog.showErrorBox("Error: ", err == null ? "unknown" : err);
+  });
+  autoUpdater.on("download-progress", (progressObj) => {
+    win.webContents.send("download-progress", progressObj.percent);
   });
 });
 
