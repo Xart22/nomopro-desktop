@@ -1,0 +1,95 @@
+{
+  "name": "nomopro-desktop",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "fetch:driver": "rimraf tools firmwares && node src/link/script/download-tools.js && node src/link/script/download-firmwares.js",
+    "start": "electron .",
+    "deploy": "electron-builder -p always",
+    "build": "electron-builder"
+  },
+  "repository": "https://github.com/Xart22/nompro-desktop",
+  "publish": {
+    "provider": "github",
+    "releaseType": "release"
+  },
+  "build": {
+    "appId": "com.nomopro.desktop",
+    "productName": "Nomopro-Desktop",
+    "asar": false,
+    "win": {
+      "publish": [
+        "github"
+      ],
+      "target": [
+        "nsis"
+      ],
+      "icon": "src/assets/img/nomokit.png",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "artifactName": "Nomopro-Desktop-${version}.${ext}",
+      "oneClick": false,
+      "uninstallDisplayName": "Nomopro-Desktop-uninstaller",
+      "installerIcon": "src/assets/img/nomokit.ico",
+      "shortcutName": "Nomopro-Desktop",
+      "runAfterFinish": true,
+      "allowToChangeInstallationDirectory": false,
+      "perMachine": true,
+      "include": "build/installer.nsh"
+    }
+  },
+  "author": "Sonasoft",
+  "keywords": [],
+  "license": "ISC",
+  "dependencies": {
+    "@abandonware/noble": "^1.9.2-10",
+    "ansi-string": "^0.2.1",
+    "axios": "^1.3.4",
+    "bootstrap": "^5.3.0-alpha1",
+    "cli-color": "^2.0.1",
+    "compare-versions": "^3.6.0",
+    "download-github-release": "^0.3.2",
+    "electron-log": "^5.0.0-beta.16",
+    "electron-store": "^8.1.0",
+    "electron-updater": "^5.3.0",
+    "express": "^4.17.1",
+    "extract-zip": "^2.0.1",
+    "folder-hash": "^4.0.1",
+    "format-message": "^6.2.3",
+    "fs": "^0.0.1-security",
+    "fs-extra": "^10.0.0",
+    "hash-files": "^1.1.1",
+    "https": "^1.0.0",
+    "install": "^0.13.0",
+    "js-yaml": "^4.0.0",
+    "laravel-echo": "^1.15.0",
+    "lodash": "^4.17.21",
+    "node-abort-controller": "^3.0.1",
+    "node-fetch": "^2.6.7",
+    "node-fetch-progress": "^1.0.2",
+    "node-machine-id": "^1.1.12",
+    "nodejs-file-downloader": "^4.10.6",
+    "openblock-parse-release-message": "0.0.1",
+    "proper-lockfile": "^4.1.2",
+    "pusher-js": "^8.0.1",
+    "require-all": "^3.0.0",
+    "serialport": "^10.4.0",
+    "socket.io-client": "^4.6.1",
+    "ws": "^7.1.1"
+  },
+  "devDependencies": {
+    "electron-builder": "^22.14.13",
+    "babel-eslint": "^10.0.1",
+    "copy-dir": "^1.3.0",
+    "electron": "^23.1.1",
+    "eslint": "^5.3.0",
+    "eslint-config-scratch": "^5.0.0",
+    "jsdoc": "^3.6.6",
+    "openblock-resource-cli": "^0.2.2",
+    "progress": "^2.0.3",
+    "rimraf": "^3.0.2",
+    "transifex": "^1.6.6"
+  }
+}
