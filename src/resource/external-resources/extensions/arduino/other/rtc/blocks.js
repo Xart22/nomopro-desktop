@@ -148,6 +148,16 @@ function addBlocks (Blockly) {
             this.jsonInit({
                 message0: Blockly.Msg.RTC_GETMONTH,
                 colour: color,
+                args0: [ 
+                    {
+                        type: 'field_dropdown',
+                        name: 'CENTURY',
+                        options: [
+                            ['true', true],
+                            ['false', false]
+                        ]
+                    }
+                ],
                 secondaryColour: secondaryColour,
                 extensions: ['output_string']
             });
@@ -237,6 +247,42 @@ function addBlocks (Blockly) {
     //         });
     //     }
     // };
+
+    Blockly.Blocks.rtc_now = {
+        init: function () {
+            this.jsonInit({
+                message0: Blockly.Msg.RTC_NOW,
+                colour: color,
+                args0: [ 
+                    {
+                        type: 'field_dropdown',
+                        name: 'TYPE',
+                        options: [
+                            ['year', 'year'],
+                            ['month', 'month'],
+                            ['day', 'day'],
+                            ['hour', 'hour'],
+                            ['minute', 'minute'],
+                            ['second', 'second']
+                        ]
+                    },
+                ],
+                secondaryColour: secondaryColour,
+                extensions: ['output_string']
+            });
+        }
+    };
+
+    Blockly.Blocks.rtc_getDay = {
+        init: function () {
+            this.jsonInit({
+                message0: Blockly.Msg.RTC_GETDAY,
+                colour: color,
+                secondaryColour: secondaryColour,
+                extensions: ['output_statement']
+            });
+        }
+    };
 
     return Blockly;
 }

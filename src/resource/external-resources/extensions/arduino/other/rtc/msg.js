@@ -12,14 +12,16 @@ function addMsg (Blockly) {
             "RTC_CATEGORY": "RTC",
             "RTC_INIT": "init rtc module",
             "RTC_GETYEAR": "rtc get year",
-            "RTC_GETMONTH": "rtc get month",
+            "RTC_GETMONTH": "rtc get month century %1",
             "RTC_GETDATE": "rtc get date",
             "RTC_GETDOW": "rtc get day of week",
             "RTC_GETHOUR": "rtc get hour 12h Flag %1 PM Flag %2",
             "RTC_GETMINUTE": "rtc get minute",
             "RTC_GETSECOND": "rtc get second",
             "RTC_GETTEMPERATURE": "rtc get temperature",
-            "RTC_OSILATORCHECK": "rtc osilator check"
+            "RTC_OSILATORCHECK": "rtc osilator check",
+            "RTC_NOW": "rtc now %1",
+            "RTC_GETDAY": "rtc get day"
         }
     );
 

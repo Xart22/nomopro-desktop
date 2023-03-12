@@ -3,9 +3,15 @@
 /* eslint-disable require-jsdoc */
 function addGenerator (Blockly) {
     Blockly.Arduino.rtc_init = function (block) {
-        Blockly.Arduino.includes_.rtc_init = `#include <DS3231.h>\n#include <Wire.h>`;
-        Blockly.Arduino.definitions_.rtc_init = `DS3231 rtc;`;
-        return `Wire.begin();\n`;
+        Blockly.Arduino.includes_.rtc_init = `#include <RTClib.h>\n#include <Wire.h>`;
+        Blockly.Arduino.definitions_.rtc_init = `RTC_DS3231 rtc;\nchar dataHari[7][12] = {"Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"};`;
+        return `
+    if (!rtc.begin()) {
+	    Serial.println("RTC Tidak Ditemukan");
+	    Serial.flush();
+	    abort();
+	}\n
+        `;
     };
 
     // Blockly.Arduino.rtc_setDate = function (block) {
@@ -41,7 +47,8 @@ function addGenerator (Blockly) {
     };
 
     Blockly.Arduino.rtc_getMonth = function (block) {
-        return [`rtc.getMonth()`, Blockly.Arduino.ORDER_ATOMIC];
+        const century = block.getFieldValue('CENTURY');
+        return [`rtc.getMonth(${century})`, Blockly.Arduino.ORDER_ATOMIC];
     };
 
     Blockly.Arduino.rtc_getHour = function (block) {
@@ -64,6 +71,11 @@ function addGenerator (Blockly) {
 
     Blockly.Arduino.rtc_osilatorCheck = function (block) {
         return [`rtc.osilatoreCheck()`, Blockly.Arduino.ORDER_ATOMIC];
+    };
+
+    Blockly.Arduino.rtc_now = function (block) {
+        const type = block.getFieldValue('TYPE');
+        return [`rtc.now().${type}()`, Blockly.Arduino.ORDER_ATOMIC];
     };
 
 
