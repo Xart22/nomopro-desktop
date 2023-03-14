@@ -17,12 +17,15 @@ logger.transports.file.level = "info";
 autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
-
+//http://15.235.140.95:2023
 const socket = io("http://15.235.140.95:2023", {
   reconnection: true,
   timeout: 10000,
 });
-
+let token = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
+);
+console.log(token);
 const syncLibary = async () => {
   logger.info("Syncing libary");
   try {
@@ -167,37 +170,47 @@ const createWindow = () => {
     height: 900,
     webPreferences: {
       nodeIntegration: true,
-
+      contextIsolation: true,
       preload: path.join(__dirname, "preload.js"),
     },
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
     title: "Nomobase-Desktop" + " - " + "v" + app.getVersion(),
   });
-  const token = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
-  );
+
   logger.info(socket.connected);
   win.loadFile(path.join(__dirname, "/src/connection/index.html"));
 
   //win.webContents.openDevTools();
 
   ipcMain.on("login", async (event, arg) => {
-    console.log(arg);
     const hwid = getHwid();
     arg.hwid = hwid;
+    arg.app = "nomopro";
     await axios
       .post("https://nomo-kit.com/api/login", arg)
-      .then((res) => {
+      .then(async (res) => {
         if (res.data.user.subscriptions == null) {
           event.reply("no-subscription", res.data);
+          await axios.get("https://nomo-kit.com/api/logout", {
+            headers: { Authorization: "Bearer " + res.data.token },
+          });
         } else {
           if (res.data.user.subscriptions.is_active == 0) {
             event.reply("no-subscription", res.data);
+            arg.status = "fail";
+            await axios.get("https://nomo-kit.com/api/logout", {
+              headers: { Authorization: "Bearer " + res.data.token },
+            });
           } else {
             fs.writeFileSync(
               path.join(__dirname, "/data/user.json"),
               JSON.stringify(res.data)
             );
+            token = await JSON.parse(
+              fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
+            );
+            console.log(token);
+            socket.emit("login", res.data);
             win.loadFile(path.join(__dirname, "/src/gui/index.html"));
           }
         }
@@ -231,7 +244,9 @@ const createWindow = () => {
         );
         win.loadFile(path.join(__dirname, "/src/auth/index.html"));
       } else {
+        socket.emit("login", token);
         win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+        win.webContents.send("dada", "data");
       }
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
@@ -266,6 +281,32 @@ const createWindow = () => {
 app.whenReady().then(() => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+  }
+});
+socket.on("login-fail", async (data) => {
+  console.log("data : " + data);
+  console.log("token : " + token.token);
+  if (data == token.token) {
+    await axios
+      .get("https://nomo-kit.com/api/logout", {
+        headers: { Authorization: "Bearer " + token.token },
+      })
+      .then((res) => {
+        fs.writeFileSync(
+          path.join(__dirname, "data/user.json"),
+          JSON.stringify({})
+        );
+        // win.loadFile(path.join(__dirname, "/src/auth/index.html"));
+        dialog.showErrorBox(
+          "Error: ",
+          "Seseorang telah login dengan akun anda, silahkan login kembali"
+        );
+        app.exit();
+        app.relaunch();
+      })
+      .catch((err) => {
+        console.log(err);
+      });
   }
 });
 
@@ -313,12 +354,13 @@ app.on("ready", async () => {
   });
 });
 
-app.on("window-all-closed", async () => {
+app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     fs.rmSync(path.join(__dirname, "/src/resource/.openblockData"), {
       recursive: true,
       force: true,
     });
+    socket.emit("logout", token);
     win.destroy();
     app.exit();
   }
