@@ -1,8 +1,0 @@
-{
-    "GPS_CATEGORY": "Sharp IR",
-    "GPS_INIT": "init sharp IR sensor rx %1 tx %2 gps baud %3",
-    "GPS_LOCATION": "gps read location %1",
-    "GPS_TIME": "gps read time %1",
-    "GPS_DATE": "gps read date %1",
-    "GPS_CHECK": "check gps %1 is valid?"
-}

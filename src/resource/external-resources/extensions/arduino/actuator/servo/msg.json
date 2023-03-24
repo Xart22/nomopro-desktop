@@ -1,8 +1,0 @@
-{
-    "SERVO_UNO_CATEGORY": "Servo",
-    "SERVO_INIT": "init Servo %1 pin %2",
-    "SERVO_WRITE": "write Servo %1 %2 degree",
-    "IRREMOTERECEIVER_DATAAVAILABLE": "IR remote receiver data available?",
-    "IRREMOTERECEIVER_RECIVEDCOMMAND": "IR remote recived command",
-    "IRREMOTERECEIVER_RESUME": "IR remote resume recive"
-}
