@@ -24,7 +24,7 @@ const socket = io("http://15.235.140.95:2023", {
 let token = JSON.parse(
   fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
 );
-console.log(token);
+
 const syncLibary = async () => {
   logger.info("Syncing libary");
   try {
@@ -91,6 +91,22 @@ const syncLibary = async () => {
                   path.join(__dirname, "src/link/tools/Arduino/libraries", file)
                 );
               }
+            });
+          }
+        );
+        fs.readdir(
+          path.join(__dirname, "src/link/tools/Arduino/local"),
+          (err, files) => {
+            files.forEach(async (file) => {
+              fs.cpSync(
+                path.join(__dirname, "src/link/tools/Arduino/local/" + file),
+                path.join(
+                  __dirname,
+                  "src/link/tools/Arduino/libraries/" + file
+                ),
+
+                { recursive: true }
+              );
             });
           }
         );
@@ -173,7 +189,7 @@ const createWindow = () => {
   });
 
   logger.info(socket.connected);
-  win.loadFile(path.join(__dirname, "/src/connection/index.html"));
+  // win.loadFile(path.join(__dirname, "/src/connection/index.html"));
 
   //win.webContents.openDevTools();
 
@@ -204,8 +220,9 @@ const createWindow = () => {
             token = await JSON.parse(
               fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
             );
-            console.log(token);
+
             socket.emit("login", res.data);
+            setMenu();
             win.loadFile(path.join(__dirname, "/src/gui/index.html"));
           }
         }
@@ -230,18 +247,19 @@ const createWindow = () => {
 
   socket.on("connect", () => {
     if (token.token !== undefined) {
-      let date = new Date(token.user.subscriptions.end_date);
-      let now = new Date();
-      if (date < now) {
-        fs.writeFileSync(
-          path.join(__dirname, "data/user.json"),
-          JSON.stringify({})
-        );
-        win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-      } else {
-        socket.emit("login", token);
-        win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-        win.webContents.send("dada", "data");
+      if (token.user.subscriptions !== null) {
+        let date = new Date(token.user.subscriptions.end_date);
+        let now = new Date();
+        if (date < now) {
+          fs.writeFileSync(
+            path.join(__dirname, "data/user.json"),
+            JSON.stringify({})
+          );
+          win.loadFile(path.join(__dirname, "/src/auth/index.html"));
+        } else {
+          setMenu();
+          win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+        }
       }
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
@@ -264,8 +282,6 @@ app.whenReady().then(() => {
   }
 });
 socket.on("login-fail", async (data) => {
-  console.log("data : " + data);
-  console.log("token : " + token.token);
   if (data == token.token) {
     await axios
       .get("https://nomo-kit.com/api/logout", {
@@ -341,3 +357,141 @@ app.on("window-all-closed", () => {
     app.exit();
   }
 });
+
+const setMenu = () => {
+  const localLib = JSON.parse(
+    fs.readFileSync(
+      path.join(__dirname, "src/link/tools/localLib.json"),
+      "utf8"
+    )
+  );
+  const libary = localLib.map((item, index) => {
+    return {
+      label: `${index + 1}. ${item}`,
+    };
+  });
+  const template = [
+    {
+      label: "View",
+      submenu: [
+        {
+          role: "reload",
+        },
+        {
+          type: "separator",
+        },
+        {
+          role: "resetzoom",
+        },
+        {
+          role: "zoomin",
+        },
+        {
+          role: "zoomout",
+        },
+        {
+          type: "separator",
+        },
+        {
+          role: "togglefullscreen",
+        },
+      ],
+    },
+
+    {
+      label: "Local Library",
+      submenu: [
+        {
+          label: "Add .ZIP Library",
+          click: async () => {
+            dialog
+              .showOpenDialog({
+                properties: ["openFile"],
+                filters: [{ name: "Zip", extensions: ["zip"] }],
+              })
+              .then(async (res) => {
+                if (!res.canceled) {
+                  try {
+                    await extract(
+                      res.filePaths[0],
+                      {
+                        dir: path.join(
+                          __dirname,
+                          "src/link/tools/Arduino/local"
+                        ),
+                      },
+                      function (err) {
+                        if (err) {
+                          console.log(err);
+                        }
+                      }
+                    );
+                    await extract(
+                      res.filePaths[0],
+                      {
+                        dir: path.join(
+                          __dirname,
+                          "src/link/tools/Arduino/libraries"
+                        ),
+                      },
+                      function (err) {
+                        if (err) {
+                          console.log(err);
+                        }
+                      }
+                    );
+
+                    const filesName = [];
+                    fs.readdir(
+                      path.join(__dirname, "src/link/tools/Arduino/local"),
+                      (err, files) => {
+                        files.forEach(async (file) => {
+                          if (!file.includes(".txt")) {
+                            filesName.push(file + ".h");
+                          }
+                        });
+                        fs.writeFileSync(
+                          path.join(__dirname, "src/link/tools/localLib.json"),
+                          JSON.stringify(filesName)
+                        );
+                      }
+                    );
+                    dialog.showMessageBox({
+                      type: "info",
+                      title: "Success",
+                      message: "Add libary success",
+                    });
+                    setMenu();
+                  } catch (error) {
+                    console.log(error);
+                  }
+                }
+              });
+          },
+        },
+        ...libary,
+      ],
+    },
+
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Learn More",
+          click: async () => {
+            const { shell } = require("electron");
+            await shell.openExternal("https://nomo-kit.com/");
+          },
+        },
+        {
+          label: "Exit",
+          click: async () => {
+            app.quit();
+          },
+        },
+      ],
+    },
+  ];
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+};

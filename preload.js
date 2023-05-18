@@ -10,6 +10,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   const email = document.getElementById("email");
   const password = document.getElementById("password");
 
+  password.addEventListener("keypress", (e) => {
+    if (e.key === "Enter") {
+      login();
+    }
+  });
   function login() {
     if (email.value !== "" && password.value !== "") {
       ipcRenderer.send("login", {
