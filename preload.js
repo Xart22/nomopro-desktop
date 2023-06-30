@@ -1,8 +1,27 @@
-const { ipcRenderer } = require("electron");
+const { shell, ipcRenderer } = require("electron");
 
 window.addEventListener("DOMContentLoaded", async () => {
   const btn = document.getElementById("login");
   const error = document.getElementById("error");
+  const openComunity = document.querySelector('[aria-label="Open Community"]');
+  const openTutorial = document.querySelector(
+    '[aria-label="Nomokit Tutorials"]'
+  );
+
+  if (error !== null) {
+    error.style.display = "none";
+  }
+  if (openComunity !== null) {
+    openComunity.addEventListener("click", () => {
+      shell.openExternal("https://nomo-kit.com/community");
+    });
+  }
+
+  if (openTutorial !== null) {
+    openTutorial.addEventListener("click", () => {
+      shell.openExternal("https://nomo-kit.com/tutorial");
+    });
+  }
   if (error !== null) {
     error.style.display = "none";
   }

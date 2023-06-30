@@ -27,7 +27,12 @@ let token = JSON.parse(
 
 const syncLibary = async () => {
   logger.info("Syncing libary");
+
   try {
+    const localDir = path.join(__dirname, "src/link/tools/Arduino/local");
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir);
+    }
     const versionFile = JSON.parse(
       fs.readFileSync(
         path.join(__dirname, "src/link/tools/version.json"),
@@ -191,7 +196,7 @@ const createWindow = () => {
   logger.info(socket.connected);
   // win.loadFile(path.join(__dirname, "/src/connection/index.html"));
 
-  //win.webContents.openDevTools();
+  win.webContents.openDevTools();
 
   ipcMain.on("login", async (event, arg) => {
     const hwid = getHwid();
