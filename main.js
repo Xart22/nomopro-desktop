@@ -190,7 +190,7 @@ const createWindow = () => {
       preload: path.join(__dirname, "preload.js"),
     },
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
-    title: "Nomobase-Desktop" + " - " + "v" + app.getVersion(),
+    title: "Nomopro-Desktop" + " - " + "v" + app.getVersion(),
   });
 
   logger.info(socket.connected);
