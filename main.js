@@ -194,9 +194,9 @@ const createWindow = () => {
   });
 
   logger.info(socket.connected);
-  // win.loadFile(path.join(__dirname, "/src/connection/index.html"));
+  win.loadFile(path.join(__dirname, "/src/connection/index.html"));
 
-  win.webContents.openDevTools();
+  //win.webContents.openDevTools();
 
   ipcMain.on("login", async (event, arg) => {
     const hwid = getHwid();
@@ -205,6 +205,11 @@ const createWindow = () => {
     await axios
       .post("https://nomo-kit.com/api/login", arg)
       .then(async (res) => {
+        if (res.data.user.subscriptions == null) {
+          if (res.data.user.trial != null) {
+            res.data.user.subscriptions = res.data.user.trial;
+          }
+        }
         if (res.data.user.subscriptions == null) {
           event.reply("no-subscription", res.data);
           await axios.get("https://nomo-kit.com/api/logout", {
@@ -235,6 +240,7 @@ const createWindow = () => {
         //win.loadFile(path.join(__dirname, "/src/gui/index.html"));
       })
       .catch((err) => {
+        console.log(err);
         event.reply("login-fail", err.response.data);
       });
   });
@@ -253,7 +259,10 @@ const createWindow = () => {
   socket.on("connect", () => {
     if (token.token !== undefined) {
       if (token.user.subscriptions !== null) {
-        let date = new Date(token.user.subscriptions.end_date);
+        let date = new Date(
+          token.user.subscriptions.end_date ??
+            token.user.subscriptions.trial_ends
+        );
         let now = new Date();
         if (date < now) {
           fs.writeFileSync(
