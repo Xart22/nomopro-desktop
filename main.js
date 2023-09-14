@@ -365,11 +365,9 @@ app.on("ready", async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    socket.emit("logout", token);
-    win.destroy();
-    app.exit();
-  }
+  socket.emit("logout", token);
+  win.destroy();
+  app.exit();
 });
 
 const setMenu = () => {

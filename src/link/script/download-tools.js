@@ -23,7 +23,7 @@ const parseArgs = function () {
   return arch;
 };
 
-const arch = parseArgs() || os.arch();
+const arch = "x64";
 
 const filterAsset = (asset) =>
   asset.name.indexOf(os.platform()) >= 0 && asset.name.indexOf(arch) >= 0;
