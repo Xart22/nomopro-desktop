@@ -311,7 +311,7 @@ socket.on("login-fail", async (data) => {
           "Error: ",
           "Seseorang telah login dengan akun anda, silahkan login kembali"
         );
-        app.exit();
+        app.quit();
         app.relaunch();
       })
       .catch((err) => {
@@ -351,7 +351,6 @@ app.on("ready", async () => {
       })
       .then((result) => {
         if (result.response === 0) {
-          app.exit();
           autoUpdater.quitAndInstall(false, false);
         }
       });
@@ -367,7 +366,7 @@ app.on("ready", async () => {
 app.on("window-all-closed", () => {
   socket.emit("logout", token);
   win.destroy();
-  app.exit();
+  app.quit();
 });
 
 const setMenu = () => {
