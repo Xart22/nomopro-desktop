@@ -41,9 +41,13 @@
       "publish": [
         "github"
       ],
-      "target": [
-        "dmg"
-      ]
+      "target": {
+        "target": "default",
+        "arch": [
+          "x64",
+          "arm64"
+        ]
+      }
     },
     "nsis": {
       "artifactName": "Nomopro-Desktop-${version}.${ext}",
