@@ -1,6 +1,6 @@
 {
   "name": "nomopro-desktop",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -10,7 +10,7 @@
     "deploy:mac": "electron-builder --mac -p always",
     "deploy:win": "electron-builder --win -p always",
     "build": "electron-builder",
-    "build:mac": "electron-builder --macos"
+    "build:mac": "electron-builder --mac"
   },
   "repository": "https://github.com/Xart22/nomopro-desktop",
   "publish": {

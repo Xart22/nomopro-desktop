@@ -10,7 +10,7 @@ const console = require("console");
 const getHwid = require("node-machine-id").machineIdSync;
 const logger = require("electron-log");
 const { io } = require("socket.io-client");
-const { autoUpdater, AppUpdater } = require("electron-updater");
+const { autoUpdater } = require("electron-updater");
 
 logger.transports.file.level = "info";
 autoUpdater.logger = logger;
@@ -351,6 +351,7 @@ app.on("ready", async () => {
       })
       .then((result) => {
         if (result.response === 0) {
+          app.exit();
           autoUpdater.quitAndInstall(false, false);
         }
       });
@@ -366,7 +367,7 @@ app.on("ready", async () => {
 app.on("window-all-closed", () => {
   socket.emit("logout", token);
   win.destroy();
-  app.quit();
+  app.exit();
 });
 
 const setMenu = () => {
