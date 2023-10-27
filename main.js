@@ -351,8 +351,8 @@ app.on("ready", async () => {
       })
       .then((result) => {
         if (result.response === 0) {
-          app.exit();
           autoUpdater.quitAndInstall(false, false);
+          app.exit();
         }
       });
   });
