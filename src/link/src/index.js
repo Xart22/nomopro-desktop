@@ -175,6 +175,11 @@ class OpenBlockLink extends Emitter {
       );
     });
   }
+
+  close() {
+    this._httpServer.close();
+    this._socketServer.close();
+  }
 }
 
 module.exports = OpenBlockLink;

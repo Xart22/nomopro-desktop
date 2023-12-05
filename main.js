@@ -24,7 +24,7 @@ const socket = io("http://15.235.140.95:2023", {
 let token = JSON.parse(
   fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
 );
-
+const link = new OpenBlockLink();
 const syncLibary = async () => {
   logger.info("Syncing libary");
 
@@ -284,7 +284,6 @@ const createWindow = () => {
   });
   syncLibary();
 
-  const link = new OpenBlockLink();
   //  START: Link server
   link.listen();
   logger.info("Link server started");
@@ -352,7 +351,7 @@ app.on("ready", async () => {
       .then((result) => {
         if (result.response === 0) {
           autoUpdater.quitAndInstall(false, false);
-          app.exit();
+          app.quit();
         }
       });
   });
@@ -507,3 +506,10 @@ const setMenu = () => {
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 };
+
+app.on("before-quit", (event) => {
+  event.preventDefault();
+  win.destroy();
+  link.close();
+  app.quit();
+});
