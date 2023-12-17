@@ -1,4 +1,11 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  Menu,
+  shell,
+} = require("electron");
 const OpenBlockLink = require("./src/link/src");
 const clc = require("cli-color");
 const path = require("path");
@@ -322,21 +329,39 @@ socket.on("login-fail", async (data) => {
 app.on("ready", async () => {
   autoUpdater.checkForUpdatesAndNotify();
   autoUpdater.on("update-available", () => {
-    dialog
-      .showMessageBox({
-        type: "question",
-        title: "Update available",
-        message: "Update Version is available",
-        buttons: ["Yes", "No"],
-        yes: 0,
-        no: 1,
-      })
-      .then((result) => {
-        if (result.response === 0) {
-          win.loadFile(path.join(__dirname, "/src/update/index.html"));
-          autoUpdater.downloadUpdate();
-        }
-      });
+    if (process.platform === "darwin") {
+      dialog
+        .showMessageBox({
+          type: "question",
+          title: "Update available",
+          message:
+            "Update is available, please download manually on the nomokit website",
+          buttons: ["Yes", "No"],
+          yes: 0,
+          no: 1,
+        })
+        .then((result) => {
+          if (result.response === 0) {
+            shell.openExternal("https://nomo-kit.com/download-macos");
+          }
+        });
+    } else {
+      dialog
+        .showMessageBox({
+          type: "question",
+          title: "Update available",
+          message: "Update Version is available",
+          buttons: ["Yes", "No"],
+          yes: 0,
+          no: 1,
+        })
+        .then((result) => {
+          if (result.response === 0) {
+            win.loadFile(path.join(__dirname, "/src/update/index.html"));
+            autoUpdater.downloadUpdate();
+          }
+        });
+    }
   });
   autoUpdater.on("update-downloaded", () => {
     dialog
