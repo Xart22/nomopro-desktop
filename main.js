@@ -23,6 +23,7 @@ logger.transports.file.level = "info";
 autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
+let win;
 //http://15.235.140.95:2023
 const socket = io("http://15.235.140.95:2023", {
   reconnection: true,
@@ -34,7 +35,6 @@ let token = JSON.parse(
 const link = new OpenBlockLink();
 const syncLibary = async () => {
   logger.info("Syncing libary");
-
   try {
     const localDir = path.join(__dirname, "src/link/tools/Arduino/local");
     if (!fs.existsSync(localDir)) {
@@ -135,6 +135,9 @@ const syncLibary = async () => {
 };
 
 app.commandLine.appendSwitch("ignore-certificate-errors");
+const version = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
+);
 
 const template = [
   {
@@ -175,6 +178,22 @@ const template = [
         },
       },
       {
+        label: "Check Update",
+        click: async () => {
+          await syncGui();
+          await syncLink();
+          await syncLibary();
+        },
+      },
+      {
+        label: "Version GUI: " + version.gui,
+        enabled: false,
+      },
+      {
+        label: "Version LINK: " + version.link,
+        enabled: false,
+      },
+      {
         label: "Exit",
         click: async () => {
           app.quit();
@@ -186,7 +205,7 @@ const template = [
 
 const menu = Menu.buildFromTemplate(template);
 Menu.setApplicationMenu(menu);
-let win;
+
 const createWindow = () => {
   win = new BrowserWindow({
     width: 1620,
@@ -289,17 +308,174 @@ const createWindow = () => {
   win.on("close", async () => {
     win.destroy();
   });
-  syncLibary();
 
   //  START: Link server
   link.listen();
   logger.info("Link server started");
   return win;
 };
-app.whenReady().then(() => {
+const syncGui = async (windowUpdate) => {
+  logger.info("Syncing Gui");
+  try {
+    const version = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
+    );
+    const response = await axios.get(
+      "https://nomo-kit.com/api/check-update-dektop"
+    );
+    const data = response.data;
+    if (data.gui !== version.gui) {
+      dialog
+        .showMessageBox({
+          type: "question",
+          title: "Update",
+          message: "Update available for GUI, do you want to update now?",
+          buttons: ["Yes", "No"],
+        })
+        .then(async (res) => {
+          if (res.response === 0) {
+            win.loadFile(path.join(__dirname, "/src/update/index.html"));
+            const downloader = new Downloader({
+              url: data.gui_url,
+              directory: path.join(__dirname, "src/update"),
+              onProgress: function (percentage, chunk, remainingSize) {
+                win.webContents.send("download-progress", percentage);
+              },
+            });
+            const { filePath, downloadStatus } = await downloader.download();
+            if (downloadStatus === "COMPLETE") {
+              fs.rmSync(path.join(__dirname, "src/gui"), {
+                recursive: true,
+                force: true,
+              });
+              await extract(
+                filePath,
+                { dir: path.join(__dirname, "src/gui") },
+                function (err) {
+                  if (err) {
+                    console.log(err);
+                  }
+                }
+              );
+              fs.writeFileSync(
+                path.join(__dirname, "src/version.json"),
+                JSON.stringify(data)
+              );
+              dialog
+                .showMessageBox({
+                  type: "info",
+                  title: "Success",
+                  message: "Update success",
+                })
+                .then((res) => {
+                  fs.readdir(
+                    path.join(__dirname, "src/update"),
+                    (err, files) => {
+                      files.forEach((file) => {
+                        if (file == "gui.zip") {
+                          fs.unlinkSync(
+                            path.join(__dirname, "src/update", file)
+                          );
+                        }
+                      });
+                    }
+                  );
+                  app.relaunch();
+                  app.exit();
+                });
+            }
+          }
+        });
+    }
+  } catch (error) {
+    console.log(error);
+  }
+};
+
+const syncLink = async (windowUpdate) => {
+  logger.info("Syncing Link");
+  try {
+    const version = JSON.parse(
+      fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
+    );
+    const response = await axios.get(
+      "https://nomo-kit.com/api/check-update-dektop"
+    );
+    const data = response.data;
+    if (data.link !== version.link) {
+      dialog
+        .showMessageBox({
+          type: "question",
+          title: "Update",
+          message: "Update available for Link, do you want to update now?",
+          buttons: ["Yes", "No"],
+        })
+        .then(async (res) => {
+          if (res.response === 0) {
+            win.loadFile(path.join(__dirname, "/src/update/index.html"));
+            const downloader = new Downloader({
+              url: data.link_url,
+              directory: path.join(__dirname, "src/update"),
+              onProgress: function (percentage, chunk, remainingSize) {
+                win.webContents.send("download-progress", percentage);
+              },
+            });
+            const { filePath, downloadStatus } = await downloader.download();
+            if (downloadStatus === "COMPLETE") {
+              fs.rmSync(path.join(__dirname, "src/link"), {
+                recursive: true,
+                force: true,
+              });
+              await extract(
+                filePath,
+                { dir: path.join(__dirname, "src/link") },
+                function (err) {
+                  if (err) {
+                    console.log(err);
+                  }
+                }
+              );
+              fs.writeFileSync(
+                path.join(__dirname, "src/version.json"),
+                JSON.stringify(data)
+              );
+              dialog
+                .showMessageBox({
+                  type: "info",
+                  title: "Success",
+                  message: "Update success",
+                })
+                .then(async (res) => {
+                  fs.readdir(
+                    path.join(__dirname, "src/update"),
+                    (err, files) => {
+                      files.forEach((file) => {
+                        if (file == "link.zip") {
+                          fs.unlinkSync(
+                            path.join(__dirname, "src/update", file)
+                          );
+                        }
+                      });
+                    }
+                  );
+                  app.relaunch();
+                  app.exit();
+                });
+            }
+          }
+        });
+    }
+  } catch (error) {
+    console.log(error);
+  }
+};
+app.whenReady().then(async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
+  await syncLibary();
+  await syncGui();
+  await syncLink();
 });
 socket.on("login-fail", async (data) => {
   if (data == token.token) {
@@ -376,7 +552,7 @@ app.on("ready", async () => {
       .then((result) => {
         if (result.response === 0) {
           autoUpdater.quitAndInstall(false, false);
-          app.exit();
+          app.quit();
         }
       });
   });
@@ -400,6 +576,9 @@ const setMenu = () => {
       path.join(__dirname, "src/link/tools/localLib.json"),
       "utf8"
     )
+  );
+  const version = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
   );
   const libary = localLib.map((item, index) => {
     return {
@@ -508,7 +687,6 @@ const setMenu = () => {
         ...libary,
       ],
     },
-
     {
       role: "help",
       submenu: [
@@ -519,6 +697,23 @@ const setMenu = () => {
             await shell.openExternal("https://nomo-kit.com/");
           },
         },
+        {
+          label: "Check Update",
+          click: async () => {
+            await syncGui();
+            await syncLink();
+            await syncLibary();
+          },
+        },
+        {
+          label: "Version GUI: " + version.gui,
+          enabled: false,
+        },
+        {
+          label: "Version LINK: " + version.link,
+          enabled: false,
+        },
+
         {
           label: "Exit",
           click: async () => {
@@ -535,6 +730,4 @@ const setMenu = () => {
 app.on("before-quit", (event) => {
   event.preventDefault();
   win.destroy();
-  link.close();
-  app.quit();
 });

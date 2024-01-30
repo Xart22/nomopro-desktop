@@ -76,7 +76,13 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   ipcRenderer.on("download-progress", function (event, text) {
     const progress = document.getElementById("progress-bar");
+    const textProgress = document.getElementById("textUpdate");
     progress.style.width = text + "%";
-    progress.innerHTML = text.toFixed(0) + "%";
+    progress.innerHTML = text + "%";
+    if (text.includes("100")) {
+      progress.style.width = "100%";
+      progress.innerHTML = "%";
+      textProgress.innerHTML = "Instaling...";
+    }
   });
 });
