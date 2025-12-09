@@ -11,6 +11,7 @@ const clc = require("cli-color");
 const path = require("path");
 const axios = require("axios");
 const fs = require("fs");
+const fsPromise = require("fs").promises;
 const extract = require("extract-zip");
 const Downloader = require("nodejs-file-downloader");
 const console = require("console");
@@ -32,6 +33,7 @@ const socket = io("http://15.235.140.95:2023", {
 let token = JSON.parse(
   fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
 );
+const userDataFilePath = path.join(__dirname, "data", "user.json");
 const link = new OpenBlockLink();
 const syncLibary = async () => {
   logger.info("Syncing libary");
@@ -219,49 +221,77 @@ const createWindow = () => {
     title: "Nomopro-Desktop" + " - " + "v" + app.getVersion(),
   });
 
-  logger.info(socket.connected);
-  win.loadFile(path.join(__dirname, "/src/connection/index.html"));
-
-  //win.webContents.openDevTools();
+  logger.info("socket.connected: " + socket.connected);
+  // Load initial page based on current state
+  if (socket.connected) {
+    // Already connected, load appropriate page
+    if (token.token !== undefined) {
+      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+    } else {
+      win.loadFile(path.join(__dirname, "/src/auth/index.html"));
+    }
+  } else {
+    if (token.token !== undefined) {
+      // Wait for connection to load GUI
+      setMenu();
+      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+    } else {
+      win.loadFile(path.join(__dirname, "/src/auth/index.html"));
+    }
+  }
+  // win.loadFile(path.join(__dirname, "/src/connection/index.html"));
+  // win.webContents.openDevTools({ mode: 'detach' });
 
   ipcMain.on("login", async (event, arg) => {
+    logger.info("Login");
     const hwid = getHwid();
     arg.hwid = hwid;
     arg.app = "nomopro";
     await axios
       .post("https://nomo-kit.com/api/login", arg)
       .then(async (res) => {
-        if (res.data.user.subscriptions == null) {
-          if (res.data.user.trial != null) {
-            res.data.user.subscriptions = res.data.user.trial;
-          }
-        }
-        if (res.data.user.subscriptions == null) {
-          event.reply("no-subscription", res.data);
-          await axios.get("https://nomo-kit.com/api/logout", {
-            headers: { Authorization: "Bearer " + res.data.token },
-          });
-        } else {
-          if (res.data.user.subscriptions.is_active == 0) {
-            event.reply("no-subscription", res.data);
-            arg.status = "fail";
-            await axios.get("https://nomo-kit.com/api/logout", {
-              headers: { Authorization: "Bearer " + res.data.token },
-            });
-          } else {
-            fs.writeFileSync(
-              path.join(__dirname, "/data/user.json"),
-              JSON.stringify(res.data)
-            );
-            token = await JSON.parse(
-              fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
-            );
+        fs.writeFileSync(
+          path.join(__dirname, "/data/user.json"),
+          JSON.stringify(res.data)
+        );
+        token = await JSON.parse(
+          fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
+        );
 
-            socket.emit("login", res.data);
-            setMenu();
-            win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-          }
-        }
+        socket.emit("login", res.data);
+        setMenu();
+        win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+        // if (res.data.user.subscriptions == null) {
+        //   if (res.data.user.trial != null) {
+        //     res.data.user.subscriptions = res.data.user.trial;
+        //   }
+        // }
+        // if (res.data.user.subscriptions == null) {
+        //   event.reply("no-subscription", res.data);
+        //   await axios.get("https://nomo-kit.com/api/logout", {
+        //     headers: { Authorization: "Bearer " + res.data.token },
+        //   });
+        // } else {
+        //   if (res.data.user.subscriptions.is_active == 0) {
+        //     event.reply("no-subscription", res.data);
+        //     arg.status = "fail";
+        //     await axios.get("https://nomo-kit.com/api/logout", {
+        //       headers: { Authorization: "Bearer " + res.data.token },
+        //     });
+        //   } else {
+        //     fs.writeFileSync(
+        //       path.join(__dirname, "/data/user.json"),
+        //       JSON.stringify(res.data)
+        //     );
+        //     token = await JSON.parse(
+        //       fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
+        //     );
+
+        //     socket.emit("login", res.data);
+        //     setMenu();
+        //     win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+        //   }
+        // }
 
         //win.loadFile(path.join(__dirname, "/src/gui/index.html"));
       })
@@ -284,23 +314,25 @@ const createWindow = () => {
 
   socket.on("connect", () => {
     if (token.token !== undefined) {
-      if (token.user.subscriptions !== null) {
-        let date = new Date(
-          token.user.subscriptions.end_date ??
-            token.user.subscriptions.trial_ends
-        );
-        let now = new Date();
-        if (date < now) {
-          fs.writeFileSync(
-            path.join(__dirname, "data/user.json"),
-            JSON.stringify({})
-          );
-          win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-        } else {
-          setMenu();
-          win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-        }
-      }
+      setMenu();
+      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      // if (token.user.subscriptions !== null) {
+      //   let date = new Date(
+      //     token.user.subscriptions.end_date ??
+      //       token.user.subscriptions.trial_ends
+      //   );
+      //   let now = new Date();
+      //   if (date < now) {
+      //     fs.writeFileSync(
+      //       path.join(__dirname, "data/user.json"),
+      //       JSON.stringify({})
+      //     );
+      //     win.loadFile(path.join(__dirname, "/src/auth/index.html"));
+      //   } else {
+      //     setMenu();
+      //     win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      //   }
+      // }
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
@@ -312,6 +344,7 @@ const createWindow = () => {
   //  START: Link server
   link.listen();
   logger.info("Link server started");
+  // win.webContents.openDevTools();
   return win;
 };
 const syncGui = async (windowUpdate) => {
@@ -713,7 +746,24 @@ const setMenu = () => {
           label: "Version LINK: " + version.link,
           enabled: false,
         },
-
+        {
+          label: "Sign Out",
+          click: async () => {
+            try {
+              // Path to your user.json file
+              const userDataPath = path.join(__dirname, "/data/user.json");
+              // Option 1: Set contents to an empty object
+              await fsPromise.writeFile(userDataPath, JSON.stringify({}), {
+                encoding: "utf8",
+              });
+              app.relaunch();
+              app.quit();
+            } catch (error) {
+              console.error("Error during sign out:", error);
+              // Optionally handle the error (show a message to the user, etc.)
+            }
+          },
+        },
         {
           label: "Exit",
           click: async () => {
@@ -730,4 +780,37 @@ const setMenu = () => {
 app.on("before-quit", (event) => {
   event.preventDefault();
   win.destroy();
+});
+
+// ipcMain.handle("get-user-info", () => {
+//   return "user-id-testing-ipcmain"
+// })
+
+ipcMain.on("getUserData", (event, arg) => {
+  // Read the JSON file
+  fs.readFile(userDataFilePath, "utf8", (err, data) => {
+    if (err) {
+      console.error("Error reading user data:", err);
+      event.sender.send("responseUserData", {
+        error: "Failed to read user data",
+      });
+      return;
+    }
+
+    try {
+      // Parse the JSON data
+      const parsedData = JSON.parse(data);
+
+      // Access the user ID from the JSON
+      const userId = parsedData.user.id;
+
+      // Send the user ID back to the renderer process
+      event.sender.send("responseUserData", { id: userId });
+    } catch (e) {
+      console.error("Error parsing user data:", e);
+      event.sender.send("responseUserData", {
+        error: "Failed to parse user data",
+      });
+    }
+  });
 });

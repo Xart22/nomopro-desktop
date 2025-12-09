@@ -16,39 +16,50 @@ const ABORT_STATE_CHECK_INTERVAL = 100;
 
 class Arduino {
     constructor(peripheralPath, config, userDataPath, toolsPath, sendstd) {
-        this._peripheralPath = peripheralPath;
-        this._config = config;
-        this._userDataPath = userDataPath;
-        this._arduinoPath = path.join(toolsPath, "Arduino");
-        this._sendstd = sendstd;
+        if (peripheralPath == "update") {
+            console.log("update arduino-cli");
+            this._peripheralPath = peripheralPath;
+            this._arduinoPath = path.join(toolsPath, "Arduino");
+            this._arduinoCliPath = path.join(this._arduinoPath, "arduino-cli");
+            this._sendstd = sendstd;
+        } else {
+            this._peripheralPath = peripheralPath;
+            this._config = config;
+            this._userDataPath = userDataPath;
+            this._arduinoPath = path.join(toolsPath, "Arduino");
+            this._sendstd = sendstd;
 
-        this._abort = false;
+            this._abort = false;
 
-        // If the fqbn is an object means the value of this parameter is
-        // different under different systems.
-        if (typeof this._config.fqbn === "object") {
-            this._config.fqbn = this._config.fqbn[os.platform()];
+            // If the fqbn is an object means the value of this parameter is
+            // different under different systems.
+            if (typeof this._config.fqbn === "object") {
+                this._config.fqbn = this._config.fqbn[os.platform()];
+            }
+
+            const projectPathName = `${this._config.fqbn.replace(
+                /:/g,
+                "_"
+            )}_project`
+                .split(/_/)
+                .splice(0, 3)
+                .join("_");
+            this._projectfilePath = path.join(
+                userDataPath,
+                "arduino",
+                projectPathName
+            );
+
+            this._arduinoCliPath = path.join(this._arduinoPath, "arduino-cli");
+
+            this._codeFolderPath = path.join(this._projectfilePath, "code");
+            this._codefilePath = path.join(this._codeFolderPath, "code.ino");
+            this._buildPath = path.join(this._projectfilePath, "build");
+            this._buildCachePath = path.join(
+                this._projectfilePath,
+                "buildCache"
+            );
         }
-
-        const projectPathName = `${this._config.fqbn.replace(
-            /:/g,
-            "_"
-        )}_project`
-            .split(/_/)
-            .splice(0, 3)
-            .join("_");
-        this._projectfilePath = path.join(
-            userDataPath,
-            "arduino",
-            projectPathName
-        );
-
-        this._arduinoCliPath = path.join(this._arduinoPath, "arduino-cli");
-
-        this._codeFolderPath = path.join(this._projectfilePath, "code");
-        this._codefilePath = path.join(this._codeFolderPath, "code.ino");
-        this._buildPath = path.join(this._projectfilePath, "build");
-        this._buildCachePath = path.join(this._projectfilePath, "buildCache");
 
         this.initArduinoCli();
     }
@@ -62,12 +73,14 @@ class Arduino {
         const stdout = yaml.load(buf.stdout.toString());
 
         if (stdout.directories.data !== this._arduinoPath) {
-            this._sendstd(
-                `${ansi.yellow_dark}arduino cli config has not been initialized yet.\n`
-            );
-            this._sendstd(
-                `${ansi.green_dark}set the path to ${this._arduinoPath}.\n`
-            );
+            if (this._peripheralPath != "update") {
+                this._sendstd(
+                    `${ansi.yellow_dark}arduino cli config has not been initialized yet.\n`
+                );
+                this._sendstd(
+                    `${ansi.green_dark}set the path to ${this._arduinoPath}.\n`
+                );
+            }
             spawnSync(this._arduinoCliPath, [
                 "config",
                 "set",

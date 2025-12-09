@@ -1,4 +1,4 @@
-const { shell, ipcRenderer } = require("electron");
+const { shell, ipcRenderer, contextBridge } = require("electron");
 
 window.addEventListener("DOMContentLoaded", async () => {
   const btn = document.getElementById("login");
@@ -68,10 +68,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       password.classList.add("is-invalid");
       error.innerHTML = "Email atau password salah";
     });
-    ipcRenderer.on("no-subscription", (event, arg) => {
-      error.style.display = "block";
-      error.innerHTML = "Anda belum memiliki paket langganan";
-    });
+    // ipcRenderer.on("no-subscription", (event, arg) => {
+    //   error.style.display = "block";
+    //   error.innerHTML = "Anda belum memiliki paket langganan";
+    // });
   }
 
   ipcRenderer.on("download-progress", function (event, text) {
@@ -85,4 +85,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       textProgress.innerHTML = "Instaling...";
     }
   });
+});
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  getUserData: (params) => ipcRenderer.send("getUserData", params),
+  on: (channel, func) => {
+        ipcRenderer.on(channel, (event, ...args) => func(event, ...args));
+    },
 });

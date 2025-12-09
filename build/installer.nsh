@@ -11,6 +11,9 @@ ${StrRep}
         SetRegView 64
     ${EndIf}
 
+    WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomopro-Desktop"
+    WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomopro-Desktop"
+
     ${StrRep} $0 "${UNINSTALL_REGISTRY_KEY}" "Software" "SOFTWARE"
     ${StrRep} $1 "${INSTALL_REGISTRY_KEY}" "Software" "SOFTWARE"
 
@@ -24,9 +27,6 @@ ${StrRep}
 
     StrCmp $R0 "" 0 done
     StrCmp $R1 "" 0 done
-
-    WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomopro-Desktop"
-    WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomopro-Desktop"
 
 done:
     ${If} ${RunningX64}
