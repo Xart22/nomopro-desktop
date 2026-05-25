@@ -17,16 +17,17 @@ const ABORT_STATE_CHECK_INTERVAL = 100;
 class Arduino {
     constructor(peripheralPath, config, userDataPath, toolsPath, sendstd) {
         if (peripheralPath == "update") {
-            console.log("update arduino-cli");
             this._peripheralPath = peripheralPath;
             this._arduinoPath = path.join(toolsPath, "Arduino");
             this._arduinoCliPath = path.join(this._arduinoPath, "arduino-cli");
+            this._configFile = path.join(this._arduinoPath, "arduino-cli.yaml");
             this._sendstd = sendstd;
         } else {
             this._peripheralPath = peripheralPath;
             this._config = config;
             this._userDataPath = userDataPath;
             this._arduinoPath = path.join(toolsPath, "Arduino");
+            this._configFile = path.join(this._arduinoPath, "arduino-cli.yaml");
             this._sendstd = sendstd;
 
             this._abort = false;
@@ -65,39 +66,10 @@ class Arduino {
     }
 
     initArduinoCli() {
-        // try to init the arduino cli config.
-        spawnSync(this._arduinoCliPath, ["config", "init"]);
-
-        // if arduino cli config haven be init, set it to link arduino path.
-        const buf = spawnSync(this._arduinoCliPath, ["config", "dump"]);
-        const stdout = yaml.load(buf.stdout.toString());
-
-        if (stdout.directories.data !== this._arduinoPath) {
-            if (this._peripheralPath != "update") {
-                this._sendstd(
-                    `${ansi.yellow_dark}arduino cli config has not been initialized yet.\n`
-                );
-                this._sendstd(
-                    `${ansi.green_dark}set the path to ${this._arduinoPath}.\n`
-                );
-            }
+        // config file (arduino-cli.yaml) is shipped with the app with correct paths
+        if (!fs.existsSync(this._configFile)) {
             spawnSync(this._arduinoCliPath, [
-                "config",
-                "set",
-                "directories.data",
-                this._arduinoPath,
-            ]);
-            spawnSync(this._arduinoCliPath, [
-                "config",
-                "set",
-                "directories.downloads",
-                path.join(this._arduinoPath, "staging"),
-            ]);
-            spawnSync(this._arduinoCliPath, [
-                "config",
-                "set",
-                "directories.user",
-                this._arduinoPath,
+                "config", "init", "--config-file", this._configFile,
             ]);
         }
     }
@@ -120,6 +92,8 @@ class Arduino {
 
             const args = [
                 "compile",
+                "--config-file",
+                this._configFile,
                 "--fqbn",
                 this._config.fqbn,
                 "--libraries",
@@ -140,7 +114,9 @@ class Arduino {
                 }
             });
 
-            const arduinoBuilder = spawn(this._arduinoCliPath, args);
+            const arduinoBuilder = spawn(this._arduinoCliPath, args, {
+                cwd: this._arduinoPath
+            });
 
             arduinoBuilder.stderr.on("data", (buf) => {
                 const data = buf.toString();
@@ -218,6 +194,8 @@ class Arduino {
     async flash(firmwarePath = null) {
         const args = [
             "upload",
+            "--config-file",
+            this._configFile,
             "--fqbn",
             this._config.fqbn,
             "--verbose",
@@ -237,7 +215,9 @@ class Arduino {
         }
 
         return new Promise((resolve, reject) => {
-            const avrdude = spawn(this._arduinoCliPath, args);
+            const avrdude = spawn(this._arduinoCliPath, args, {
+                cwd: this._arduinoPath,
+            });
 
             avrdude.stderr.on("data", (buf) => {
                 let data = buf.toString();

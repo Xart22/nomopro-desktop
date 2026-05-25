@@ -1,5 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="id">
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
@@ -8,131 +8,215 @@
       rel="stylesheet"
       href="../assets/bootstrap-5.3.0-alpha1-dist/css/bootstrap.min.css"
     />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
-      .coming-soon {
-        background-color: white;
-        height: 100vh;
+      :root {
+        --bg1: #f5f7fb;
+        --bg2: #e9f0ff;
+        --accent: #4b7bec;
+        --muted: #6b7280;
+        --card-radius: 14px;
+        --max-width: 820px;
       }
 
-      .coming-soon-content {
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
+      html,
+      body {
         height: 100%;
       }
+      body {
+        margin: 0;
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Helvetica Neue",
+          Arial;
+        background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
 
-      .coming-soon-title {
-        font-size: 50px;
+      .wrap {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .card-panel {
+        background: #fff;
+        border-radius: var(--card-radius);
+        box-shadow: 0 10px 30px rgba(44, 62, 80, 0.08);
+        max-width: var(--max-width);
+        width: 100%;
+        padding: 32px;
+        display: flex;
+        gap: 24px;
+        align-items: center;
+      }
+
+      .card-left {
+        flex: 1;
+      }
+      .card-right {
+        width: 220px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .title {
+        font-size: 28px;
         font-weight: 700;
-        color: #000;
+        margin: 0;
+        color: #0f1724;
+      }
+      .subtitle {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 15px;
       }
 
-      .coming-soon-text {
-        font-size: 20px;
-        font-weight: 400;
-        color: #000;
-        margin-top: 20px;
-      }
-
-      .coming-soon-image {
-        margin-top: 20px;
-      }
-
-      .center {
-        display: block;
-        margin-left: auto;
-        margin-right: auto;
-        width: 50%;
-      }
       .loader {
-        border: 16px solid #f3f3f3;
+        width: 84px;
+        height: 84px;
         border-radius: 50%;
-        border-top: 16px solid #3498db;
-        width: 120px;
-        height: 120px;
-        -webkit-animation: spin 2s linear infinite; /* Safari */
-        animation: spin 2s linear infinite;
-        margin-bottom: 20px;
-      }
-
-      /* Safari */
-      @-webkit-keyframes spin {
-        0% {
-          -webkit-transform: rotate(0deg);
-        }
-        100% {
-          -webkit-transform: rotate(360deg);
-        }
+        display: inline-block;
+        background: conic-gradient(var(--accent), #a3bffa33 40%, #e6eefc 60%);
+        animation: spin 1.6s linear infinite;
+        box-shadow: inset 0 -8px 18px rgba(255, 255, 255, 0.6);
       }
 
       @keyframes spin {
-        0% {
-          transform: rotate(0deg);
-        }
-        100% {
+        to {
           transform: rotate(360deg);
+        }
+      }
+
+      .recon {
+        margin-top: 14px;
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .hero-img {
+        max-width: 160px;
+        width: 100%;
+        height: auto;
+        border-radius: 10px;
+      }
+
+      .actions {
+        margin-top: 18px;
+        display: flex;
+        gap: 10px;
+      }
+      .btn-primary-custom {
+        background: var(--accent);
+        border: none;
+        color: #fff;
+        padding: 10px 16px;
+        border-radius: 10px;
+      }
+      .btn-ghost {
+        background: transparent;
+        border: 1px solid #e6eefc;
+        color: var(--accent);
+        padding: 10px 16px;
+        border-radius: 10px;
+      }
+
+      @media (max-width: 720px) {
+        .card-panel {
+          flex-direction: column;
+          align-items: stretch;
+          padding: 20px;
+        }
+        .card-right {
+          width: 100%;
+          justify-content: flex-start;
+        }
+        .hero-img {
+          max-width: 120px;
         }
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <div class="coming-soon">
-        <div class="coming-soon-content">
-          <div class="coming-soon-title">
-            <h1>Oh tidak!</h1>
+    <div class="wrap">
+      <div class="card-panel">
+        <div class="card-left">
+          <h1 class="title">Koneksi Terputus</h1>
+          <div class="subtitle">
+            Koneksi internet terputus. Periksa jaringan Anda dan coba lagi.
           </div>
-          <div class="coming-soon-text">
-            <p>
-              Koneksi Internet Anda terputus. Harap periksa koneksi Internet
-              Anda.
-            </p>
+
+          <div
+            style="
+              margin-top: 18px;
+              display: flex;
+              align-items: center;
+              gap: 18px;
+            "
+          >
+            <div class="loader" aria-hidden="true"></div>
+            <div>
+              <div id="recon" class="recon">Mencoba menyambung</div>
+              <div class="actions">
+                <button
+                  class="btn-primary-custom"
+                  onclick="window.location.reload()"
+                >
+                  Muat ulang
+                </button>
+                <button class="btn-ghost" onclick="openSupport()">
+                  Bantuan
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="loader"></div>
-          <p id="recon">Recconecting...</p>
-          <div class="coming-soon-image">
-            <img
-              class="center"
-              src="../assets/img/nomokit.png"
-              alt="coming-soon"
-            />
-          </div>
+        </div>
+        <div class="card-right">
+          <img
+            class="hero-img"
+            src="../assets/img/nomokit.png"
+            alt="device image"
+          />
         </div>
       </div>
     </div>
+
     <script src="../assets/bootstrap-5.3.0-alpha1-dist/js/bootstrap.min.js"></script>
     <script>
       const recon = document.getElementById("recon");
-      let count = 0;
-      let max = 5;
+      let dots = 0;
+      const maxDots = 4;
 
-      function startTime() {
-        const today = new Date();
-        let h = today.getHours();
-        let m = today.getMinutes();
-        let s = today.getSeconds();
-        m = checkTime(m);
-        s = checkTime(s);
-        count++;
-        if (count > max) {
-          recon.innerHTML = "Reconnecting";
-          count = 0;
-        } else {
-          recon.innerHTML = "Reconnecting" + ".".repeat(count);
-        }
-        setTimeout(startTime, 1000);
+      function startIndicator() {
+        dots = (dots + 1) % (maxDots + 1);
+        const dotsText = ".".repeat(dots);
+        recon.textContent = `Mencoba menyambung${dotsText}`;
       }
 
-      function checkTime(i) {
-        if (i < 10) {
-          i = "0" + i;
-        } // add zero in front of numbers < 10
-        return i;
-      }
-      document.addEventListener("DOMContentLoaded", function () {
-        startTime();
+      let indicatorTimer = null;
+      document.addEventListener("DOMContentLoaded", () => {
+        indicatorTimer = setInterval(startIndicator, 700);
       });
+
+      function openSupport() {
+        // placeholder: replace with real support action if available
+        alert(
+          "Periksa koneksi Wi‑Fi atau kabel. Jika masih bermasalah, lihat dokumentasi atau hubungi dukungan.",
+        );
+      }
     </script>
   </body>
 </html>

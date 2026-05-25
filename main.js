@@ -1,26 +1,11 @@
-const {
-  app,
-  BrowserWindow,
-  ipcMain,
-  dialog,
-  Menu,
-  shell,
-} = require("electron");
+const { app, BrowserWindow, dialog, Menu, shell } = require("electron");
 const OpenBlockLink = require("./src/link/src");
-const clc = require("cli-color");
 const path = require("path");
-const axios = require("axios");
 const fs = require("fs");
-const fsPromise = require("fs").promises;
-const extract = require("extract-zip");
-const Downloader = require("nodejs-file-downloader");
-const console = require("console");
-const getHwid = require("node-machine-id").machineIdSync;
-const logger = require("electron-log");
+const logger = require("./src/main/logger");
 const { io } = require("socket.io-client");
 const { autoUpdater } = require("electron-updater");
 
-logger.transports.file.level = "info";
 autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
@@ -31,183 +16,73 @@ const socket = io("http://15.235.140.95:2023", {
   timeout: 10000,
 });
 let token = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
+  fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8"),
 );
-const userDataFilePath = path.join(__dirname, "data", "user.json");
-const link = new OpenBlockLink();
-const syncLibary = async () => {
-  logger.info("Syncing libary");
+
+const getPythonCandidates = () => {
+  const candidates = [];
+
+  // Virtualenv Python (user-installed packages like numpy)
   try {
-    const localDir = path.join(__dirname, "src/link/tools/Arduino/local");
-    if (!fs.existsSync(localDir)) {
-      fs.mkdirSync(localDir);
-    }
-    const versionFile = JSON.parse(
-      fs.readFileSync(
-        path.join(__dirname, "src/link/tools/version.json"),
-        "utf8"
-      )
+    const isWin = process.platform === "win32";
+    const venvPython = path.join(
+      __dirname,
+      "data",
+      "python-env",
+      isWin ? "Scripts" : "bin",
+      isWin ? "python.exe" : "python3",
     );
-    const response = await axios.get("https://nomo-kit.com/api/check-update");
-    const data = response.data;
-    if (data.version !== versionFile.version) {
-      fs.rmSync(path.join(__dirname, "src/link/tools/Arduino/libraries"), {
-        recursive: true,
-        force: true,
-      });
-      const downloader = new Downloader({
-        url: data.url,
-        directory: path.join(__dirname, "src/link/tools/Arduino/libraries"),
-      });
+    if (fs.existsSync(venvPython)) candidates.push(venvPython);
+  } catch (e) {
+    // ignore
+  }
 
-      const { filePath, downloadStatus } = await downloader.download();
-      if (downloadStatus === "COMPLETE") {
-        await extract(
-          filePath,
-          { dir: path.join(__dirname, "src/link/tools/Arduino/libraries") },
-          function (err) {
-            if (err) {
-              console.log(err);
-            }
-          }
-        );
-
-        fs.readdir(
-          path.join(__dirname, "src/link/tools/Arduino/libraries"),
-          (err, files) => {
-            files.forEach(async (file) => {
-              if (file !== data.version + ".zip") {
-                await extract(
-                  path.join(
-                    __dirname,
-                    "src/link/tools/Arduino/libraries/" + file
-                  ),
-                  {
-                    dir: path.join(
-                      __dirname,
-                      "src/link/tools/Arduino/libraries"
-                    ),
-                  },
-                  function (err) {
-                    if (err) {
-                      console.log(err);
-                    }
-                  }
-                );
-                fs.unlinkSync(
-                  path.join(
-                    __dirname,
-                    "src/link/tools/Arduino/libraries/" + file
-                  )
-                );
-              } else {
-                fs.unlinkSync(
-                  path.join(__dirname, "src/link/tools/Arduino/libraries", file)
-                );
-              }
-            });
-          }
-        );
-        fs.readdir(
-          path.join(__dirname, "src/link/tools/Arduino/local"),
-          (err, files) => {
-            files.forEach(async (file) => {
-              fs.cpSync(
-                path.join(__dirname, "src/link/tools/Arduino/local/" + file),
-                path.join(
-                  __dirname,
-                  "src/link/tools/Arduino/libraries/" + file
-                ),
-
-                { recursive: true }
-              );
-            });
-          }
-        );
-
-        fs.writeFileSync(
-          path.join(__dirname, "src/link/tools/version.json"),
-          JSON.stringify(data)
-        );
+  try {
+    const resourcesPython = path.join(
+      app.isPackaged ? process.resourcesPath : __dirname,
+      "python",
+    );
+    if (fs.existsSync(resourcesPython)) {
+      if (process.platform === "win32") {
+        const pexe = path.join(resourcesPython, "python.exe");
+        const pexeAlt = path.join(resourcesPython, "python", "python.exe");
+        if (fs.existsSync(pexe)) candidates.push(pexe);
+        if (fs.existsSync(pexeAlt)) candidates.push(pexeAlt);
+      } else {
+        const pyBin = path.join(resourcesPython, "bin", "python3");
+        const pyBinAlt = path.join(resourcesPython, "bin", "python");
+        const pyRoot = path.join(resourcesPython, "python3");
+        if (fs.existsSync(pyBin)) candidates.push(pyBin);
+        if (fs.existsSync(pyBinAlt)) candidates.push(pyBinAlt);
+        if (fs.existsSync(pyRoot)) candidates.push(pyRoot);
       }
     }
-  } catch (error) {
-    console.log(error);
+  } catch (e) {
+    // ignore
   }
+
+  // Fallback to system candidates
+  if (process.platform === "win32") {
+    candidates.push("python", "py");
+  } else {
+    candidates.push("python3", "python");
+  }
+  return candidates;
 };
+let link;
+const appRoot = __dirname;
+// delegate sync logic to helper module (keeps main.js small)
+const {
+  syncLibary: _syncLibary,
+  syncGui: _syncGui,
+  syncLink: _syncLink,
+} = require("./src/main/sync");
+const { setMenu: _setMenu } = require("./src/main/menu");
+
+// lightweight wrappers so existing call sites keep working
+const syncLibary = async () => _syncLibary(appRoot);
 
 app.commandLine.appendSwitch("ignore-certificate-errors");
-const version = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
-);
-
-const template = [
-  {
-    label: "View",
-    submenu: [
-      {
-        role: "reload",
-      },
-      {
-        type: "separator",
-      },
-      {
-        role: "resetzoom",
-      },
-      {
-        role: "zoomin",
-      },
-      {
-        role: "zoomout",
-      },
-      {
-        type: "separator",
-      },
-      {
-        role: "togglefullscreen",
-      },
-    ],
-  },
-
-  {
-    role: "help",
-    submenu: [
-      {
-        label: "Learn More",
-        click: async () => {
-          const { shell } = require("electron");
-          await shell.openExternal("https://nomo-kit.com/");
-        },
-      },
-      {
-        label: "Check Update",
-        click: async () => {
-          await syncGui();
-          await syncLink();
-          await syncLibary();
-        },
-      },
-      {
-        label: "Version GUI: " + version.gui,
-        enabled: false,
-      },
-      {
-        label: "Version LINK: " + version.link,
-        enabled: false,
-      },
-      {
-        label: "Exit",
-        click: async () => {
-          app.quit();
-        },
-      },
-    ],
-  },
-];
-
-const menu = Menu.buildFromTemplate(template);
-Menu.setApplicationMenu(menu);
-
 const createWindow = () => {
   win = new BrowserWindow({
     width: 1620,
@@ -220,7 +95,7 @@ const createWindow = () => {
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
     title: "Nomopro-Desktop" + " - " + "v" + app.getVersion(),
   });
-
+  win.webContents.openDevTools();
   logger.info("socket.connected: " + socket.connected);
   // Load initial page based on current state
   if (socket.connected) {
@@ -239,269 +114,40 @@ const createWindow = () => {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
   }
-  // win.loadFile(path.join(__dirname, "/src/connection/index.html"));
-  // win.webContents.openDevTools({ mode: 'detach' });
-
-  ipcMain.on("login", async (event, arg) => {
-    logger.info("Login");
-    const hwid = getHwid();
-    arg.hwid = hwid;
-    arg.app = "nomopro";
-    await axios
-      .post("https://nomo-kit.com/api/login", arg)
-      .then(async (res) => {
-        fs.writeFileSync(
-          path.join(__dirname, "/data/user.json"),
-          JSON.stringify(res.data)
-        );
-        token = await JSON.parse(
-          fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
-        );
-
-        socket.emit("login", res.data);
-        setMenu();
-        win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-        // if (res.data.user.subscriptions == null) {
-        //   if (res.data.user.trial != null) {
-        //     res.data.user.subscriptions = res.data.user.trial;
-        //   }
-        // }
-        // if (res.data.user.subscriptions == null) {
-        //   event.reply("no-subscription", res.data);
-        //   await axios.get("https://nomo-kit.com/api/logout", {
-        //     headers: { Authorization: "Bearer " + res.data.token },
-        //   });
-        // } else {
-        //   if (res.data.user.subscriptions.is_active == 0) {
-        //     event.reply("no-subscription", res.data);
-        //     arg.status = "fail";
-        //     await axios.get("https://nomo-kit.com/api/logout", {
-        //       headers: { Authorization: "Bearer " + res.data.token },
-        //     });
-        //   } else {
-        //     fs.writeFileSync(
-        //       path.join(__dirname, "/data/user.json"),
-        //       JSON.stringify(res.data)
-        //     );
-        //     token = await JSON.parse(
-        //       fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8")
-        //     );
-
-        //     socket.emit("login", res.data);
-        //     setMenu();
-        //     win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-        //   }
-        // }
-
-        //win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-      })
-      .catch((err) => {
-        console.log(err);
-        event.reply("login-fail", err.response.data);
-      });
-  });
-
-  ipcMain.on("logout", async (event, arg) => {
-    fs.writeFileSync(
-      path.join(__dirname, "data/user.json"),
-      JSON.stringify({})
-    );
-    win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-  });
-  socket.on("disconnect", () => {
-    win.loadFile(path.join(__dirname, "/src/connection/index.html"));
-  });
-
-  socket.on("connect", () => {
-    if (token.token !== undefined) {
-      setMenu();
-      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-      // if (token.user.subscriptions !== null) {
-      //   let date = new Date(
-      //     token.user.subscriptions.end_date ??
-      //       token.user.subscriptions.trial_ends
-      //   );
-      //   let now = new Date();
-      //   if (date < now) {
-      //     fs.writeFileSync(
-      //       path.join(__dirname, "data/user.json"),
-      //       JSON.stringify({})
-      //     );
-      //     win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-      //   } else {
-      //     setMenu();
-      //     win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-      //   }
-      // }
-    } else {
-      win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-    }
-  });
+  // register ipc and socket handlers from helper modules
+  const { registerIpc } = require("./src/main/ipc");
+  const { initSocket } = require("./src/main/socket");
+  const { registerPipHandlers } = require("./src/main/pip-manager");
+  const { registerProjectDepsHandlers } = require("./src/main/project-deps");
+  const { registerSafeInstallHandlers } = require("./src/main/safe-install");
+  const {
+    registerDiagnosticHandlers,
+  } = require("./src/main/diagnostic-bundle");
+  const { registerOfflineCacheHandlers } = require("./src/main/offline-cache");
+  const { registerRecoveryHandlers } = require("./src/main/recovery-mode");
+  registerIpc({ win, appRoot, socket });
+  const bundledPythonDir = path.join(
+    app.isPackaged ? process.resourcesPath : __dirname,
+    "python",
+  );
+  registerPipHandlers({ appRoot, win, bundledPythonDir });
+  registerProjectDepsHandlers({ appRoot });
+  registerSafeInstallHandlers();
+  registerDiagnosticHandlers({ appRoot });
+  registerOfflineCacheHandlers({ appRoot });
+  registerRecoveryHandlers({ appRoot });
+  initSocket({ socket, appRoot, win });
   win.on("close", async () => {
     win.destroy();
   });
 
   //  START: Link server
-  link.listen();
-  logger.info("Link server started");
-  // win.webContents.openDevTools();
-  return win;
+  const { startLink: _startLink } = require("./src/main/link");
+  link = _startLink({ win });
 };
-const syncGui = async (windowUpdate) => {
-  logger.info("Syncing Gui");
-  try {
-    const version = JSON.parse(
-      fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
-    );
-    const response = await axios.get(
-      "https://nomo-kit.com/api/check-update-dektop"
-    );
-    const data = response.data;
-    if (data.gui !== version.gui) {
-      dialog
-        .showMessageBox({
-          type: "question",
-          title: "Update",
-          message: "Update available for GUI, do you want to update now?",
-          buttons: ["Yes", "No"],
-        })
-        .then(async (res) => {
-          if (res.response === 0) {
-            win.loadFile(path.join(__dirname, "/src/update/index.html"));
-            const downloader = new Downloader({
-              url: data.gui_url,
-              directory: path.join(__dirname, "src/update"),
-              onProgress: function (percentage, chunk, remainingSize) {
-                win.webContents.send("download-progress", percentage);
-              },
-            });
-            const { filePath, downloadStatus } = await downloader.download();
-            if (downloadStatus === "COMPLETE") {
-              fs.rmSync(path.join(__dirname, "src/gui"), {
-                recursive: true,
-                force: true,
-              });
-              await extract(
-                filePath,
-                { dir: path.join(__dirname, "src/gui") },
-                function (err) {
-                  if (err) {
-                    console.log(err);
-                  }
-                }
-              );
-              fs.writeFileSync(
-                path.join(__dirname, "src/version.json"),
-                JSON.stringify(data)
-              );
-              dialog
-                .showMessageBox({
-                  type: "info",
-                  title: "Success",
-                  message: "Update success",
-                })
-                .then((res) => {
-                  fs.readdir(
-                    path.join(__dirname, "src/update"),
-                    (err, files) => {
-                      files.forEach((file) => {
-                        if (file == "gui.zip") {
-                          fs.unlinkSync(
-                            path.join(__dirname, "src/update", file)
-                          );
-                        }
-                      });
-                    }
-                  );
-                  app.relaunch();
-                  app.exit();
-                });
-            }
-          }
-        });
-    }
-  } catch (error) {
-    console.log(error);
-  }
-};
+const syncGui = async (windowUpdate) => _syncGui(win, appRoot, windowUpdate);
 
-const syncLink = async (windowUpdate) => {
-  logger.info("Syncing Link");
-  try {
-    const version = JSON.parse(
-      fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
-    );
-    const response = await axios.get(
-      "https://nomo-kit.com/api/check-update-dektop"
-    );
-    const data = response.data;
-    if (data.link !== version.link) {
-      dialog
-        .showMessageBox({
-          type: "question",
-          title: "Update",
-          message: "Update available for Link, do you want to update now?",
-          buttons: ["Yes", "No"],
-        })
-        .then(async (res) => {
-          if (res.response === 0) {
-            win.loadFile(path.join(__dirname, "/src/update/index.html"));
-            const downloader = new Downloader({
-              url: data.link_url,
-              directory: path.join(__dirname, "src/update"),
-              onProgress: function (percentage, chunk, remainingSize) {
-                win.webContents.send("download-progress", percentage);
-              },
-            });
-            const { filePath, downloadStatus } = await downloader.download();
-            if (downloadStatus === "COMPLETE") {
-              fs.rmSync(path.join(__dirname, "src/link"), {
-                recursive: true,
-                force: true,
-              });
-              await extract(
-                filePath,
-                { dir: path.join(__dirname, "src/link") },
-                function (err) {
-                  if (err) {
-                    console.log(err);
-                  }
-                }
-              );
-              fs.writeFileSync(
-                path.join(__dirname, "src/version.json"),
-                JSON.stringify(data)
-              );
-              dialog
-                .showMessageBox({
-                  type: "info",
-                  title: "Success",
-                  message: "Update success",
-                })
-                .then(async (res) => {
-                  fs.readdir(
-                    path.join(__dirname, "src/update"),
-                    (err, files) => {
-                      files.forEach((file) => {
-                        if (file == "link.zip") {
-                          fs.unlinkSync(
-                            path.join(__dirname, "src/update", file)
-                          );
-                        }
-                      });
-                    }
-                  );
-                  app.relaunch();
-                  app.exit();
-                });
-            }
-          }
-        });
-    }
-  } catch (error) {
-    console.log(error);
-  }
-};
+const syncLink = async (windowUpdate) => _syncLink(win, appRoot, windowUpdate);
 app.whenReady().then(async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
@@ -509,30 +155,6 @@ app.whenReady().then(async () => {
   await syncLibary();
   await syncGui();
   await syncLink();
-});
-socket.on("login-fail", async (data) => {
-  if (data == token.token) {
-    await axios
-      .get("https://nomo-kit.com/api/logout", {
-        headers: { Authorization: "Bearer " + token.token },
-      })
-      .then((res) => {
-        fs.writeFileSync(
-          path.join(__dirname, "data/user.json"),
-          JSON.stringify({})
-        );
-        // win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-        dialog.showErrorBox(
-          "Error: ",
-          "Seseorang telah login dengan akun anda, silahkan login kembali"
-        );
-        app.quit();
-        app.relaunch();
-      })
-      .catch((err) => {
-        console.log(err);
-      });
-  }
 });
 
 app.on("ready", async () => {
@@ -603,214 +225,283 @@ app.on("window-all-closed", () => {
   app.exit();
 });
 
-const setMenu = () => {
-  const localLib = JSON.parse(
-    fs.readFileSync(
-      path.join(__dirname, "src/link/tools/localLib.json"),
-      "utf8"
-    )
-  );
-  const version = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "src/version.json"), "utf8")
-  );
-  const libary = localLib.map((item, index) => {
-    return {
-      label: `${index + 1}. ${item}`,
-    };
-  });
-  const template = [
-    {
-      label: "View",
-      submenu: [
-        {
-          role: "reload",
-        },
-        {
-          type: "separator",
-        },
-        {
-          role: "resetzoom",
-        },
-        {
-          role: "zoomin",
-        },
-        {
-          role: "zoomout",
-        },
-        {
-          type: "separator",
-        },
-        {
-          role: "togglefullscreen",
-        },
-      ],
-    },
-
-    {
-      label: "Local Library",
-      submenu: [
-        {
-          label: "Add .ZIP Library",
-          click: async () => {
-            dialog
-              .showOpenDialog({
-                properties: ["openFile"],
-                filters: [{ name: "Zip", extensions: ["zip"] }],
-              })
-              .then(async (res) => {
-                if (!res.canceled) {
-                  try {
-                    await extract(
-                      res.filePaths[0],
-                      {
-                        dir: path.join(
-                          __dirname,
-                          "src/link/tools/Arduino/local"
-                        ),
-                      },
-                      function (err) {
-                        if (err) {
-                          console.log(err);
-                        }
-                      }
-                    );
-                    await extract(
-                      res.filePaths[0],
-                      {
-                        dir: path.join(
-                          __dirname,
-                          "src/link/tools/Arduino/libraries"
-                        ),
-                      },
-                      function (err) {
-                        if (err) {
-                          console.log(err);
-                        }
-                      }
-                    );
-
-                    const filesName = [];
-                    fs.readdir(
-                      path.join(__dirname, "src/link/tools/Arduino/local"),
-                      (err, files) => {
-                        files.forEach(async (file) => {
-                          if (!file.includes(".txt")) {
-                            filesName.push(file + ".h");
-                          }
-                        });
-                        fs.writeFileSync(
-                          path.join(__dirname, "src/link/tools/localLib.json"),
-                          JSON.stringify(filesName)
-                        );
-                      }
-                    );
-                    dialog.showMessageBox({
-                      type: "info",
-                      title: "Success",
-                      message: "Add libary success",
-                    });
-                    setMenu();
-                  } catch (error) {
-                    console.log(error);
-                  }
-                }
-              });
-          },
-        },
-        ...libary,
-      ],
-    },
-    {
-      role: "help",
-      submenu: [
-        {
-          label: "Learn More",
-          click: async () => {
-            const { shell } = require("electron");
-            await shell.openExternal("https://nomo-kit.com/");
-          },
-        },
-        {
-          label: "Check Update",
-          click: async () => {
-            await syncGui();
-            await syncLink();
-            await syncLibary();
-          },
-        },
-        {
-          label: "Version GUI: " + version.gui,
-          enabled: false,
-        },
-        {
-          label: "Version LINK: " + version.link,
-          enabled: false,
-        },
-        {
-          label: "Sign Out",
-          click: async () => {
-            try {
-              // Path to your user.json file
-              const userDataPath = path.join(__dirname, "/data/user.json");
-              // Option 1: Set contents to an empty object
-              await fsPromise.writeFile(userDataPath, JSON.stringify({}), {
-                encoding: "utf8",
-              });
-              app.relaunch();
-              app.quit();
-            } catch (error) {
-              console.error("Error during sign out:", error);
-              // Optionally handle the error (show a message to the user, etc.)
-            }
-          },
-        },
-        {
-          label: "Exit",
-          click: async () => {
-            app.quit();
-          },
-        },
-      ],
-    },
-  ];
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-};
+const setMenu = () => _setMenu({ win, appRoot, app });
 
 app.on("before-quit", (event) => {
   event.preventDefault();
   win.destroy();
 });
 
-// ipcMain.handle("get-user-info", () => {
-//   return "user-id-testing-ipcmain"
-// })
+// ipc handlers and socket listeners are registered by modules in createWindow
 
-ipcMain.on("getUserData", (event, arg) => {
-  // Read the JSON file
-  fs.readFile(userDataFilePath, "utf8", (err, data) => {
-    if (err) {
-      console.error("Error reading user data:", err);
-      event.sender.send("responseUserData", {
-        error: "Failed to read user data",
-      });
-      return;
-    }
+// ---- Hardened Python runner IPC for renderer bridge ----
+const { ipcMain } = require("electron");
+const childProcess = require("child_process");
 
+let currentPythonProc = null;
+let currentPythonTimeout = null;
+const PYTHON_EXECUTION_TIMEOUT_MS = 30000; // 30s default timeout
+
+const killCurrentPython = () => {
+  if (currentPythonTimeout) {
+    clearTimeout(currentPythonTimeout);
+    currentPythonTimeout = null;
+  }
+  if (currentPythonProc && !currentPythonProc.killed) {
     try {
-      // Parse the JSON data
-      const parsedData = JSON.parse(data);
-
-      // Access the user ID from the JSON
-      const userId = parsedData.user.id;
-
-      // Send the user ID back to the renderer process
-      event.sender.send("responseUserData", { id: userId });
+      currentPythonProc.kill("SIGKILL");
     } catch (e) {
-      console.error("Error parsing user data:", e);
-      event.sender.send("responseUserData", {
-        error: "Failed to parse user data",
+      logger.warn("Failed to kill existing python process");
+    }
+    currentPythonProc = null;
+  }
+};
+
+ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
+  // Kill any existing process first
+  killCurrentPython();
+
+  const script = String(code || "");
+  const effectiveTimeout =
+    typeof timeoutMs === "number" && timeoutMs > 0
+      ? timeoutMs
+      : PYTHON_EXECUTION_TIMEOUT_MS;
+
+  // Use getPythonCandidates() which bundles bundled + system candidates
+  const candidates = getPythonCandidates();
+
+  let proc = null;
+  let used = null;
+  logger.info("[Python] Candidates: " + candidates.join(", "));
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    try {
+      const isAbsolute = path.isAbsolute(candidate);
+      const args = isAbsolute
+        ? ["-u", "-c", script]
+        : candidate === "py"
+          ? ["-3", "-u", "-c", script]
+          : ["-u", "-c", script];
+
+      // Sanitized environment: only pass essential vars
+      const env = {
+        PATH: process.env.PATH || "",
+        HOME: process.env.HOME || process.env.USERPROFILE || "",
+        USERPROFILE: process.env.USERPROFILE || "",
+        SYSTEMROOT: process.env.SYSTEMROOT || "",
+        TMP: process.env.TMP || process.env.TEMP || "",
+        TEMP: process.env.TEMP || process.env.TMP || "",
+        PYTHONUNBUFFERED: "1",
+      };
+
+      proc = childProcess.spawn(candidate, args, {
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env,
       });
+      used = candidate;
+      logger.info("[Python] Using: " + candidate);
+      break;
+    } catch (err) {
+      proc = null;
+    }
+  }
+
+  if (!proc) {
+    throw new Error(
+      `Python executable not found. Tried: ${candidates.join(", ")}`,
+    );
+  }
+
+  currentPythonProc = proc;
+
+  // Line-buffered stdout streaming
+  let stdoutBuffer = "";
+  proc.stdout.on("data", (chunk) => {
+    const text = String(chunk || "");
+    stdout += text;
+    stdoutBuffer += text;
+    try {
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() || "";
+      lines.forEach((line) => {
+        if (win && win.webContents)
+          win.webContents.send("nomopro-python-stdout", line);
+      });
+    } catch (e) {
+      // ignore send errors
     }
   });
+
+  // Line-buffered stderr streaming
+  let stderrBuffer = "";
+  proc.stderr.on("data", (chunk) => {
+    const text = String(chunk || "");
+    stderr += text;
+    stderrBuffer += text;
+    try {
+      const lines = stderrBuffer.split(/\r?\n/);
+      stderrBuffer = lines.pop() || "";
+      lines.forEach((line) => {
+        if (win && win.webContents)
+          win.webContents.send("nomopro-python-stderr", line);
+      });
+    } catch (e) {
+      // ignore send errors
+    }
+  });
+
+  // Error handler - prevents hanging promise on spawn failure
+  const procError = new Promise((_, reject) => {
+    proc.on("error", (err) => {
+      killCurrentPython();
+      reject(new Error(`Python process error: ${err.message}`));
+    });
+  });
+
+  // Timeout guard
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      killCurrentPython();
+      reject(
+        new Error(`Python execution timed out after ${effectiveTimeout}ms.`),
+      );
+    }, effectiveTimeout);
+  });
+  currentPythonTimeout = timeoutId;
+
+  // Process close handler
+  const closePromise = new Promise((resolve) => {
+    proc.on("close", (exitCode, signal) => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        currentPythonTimeout = null;
+      }
+      if (timedOut) {
+        resolve({
+          exitCode: -1,
+          signal: "SIGTERM",
+          stdout,
+          stderr: stderr + "\n[Execution timed out]",
+          commands: [],
+          timedOut: true,
+        });
+        return;
+      }
+      currentPythonProc = null;
+
+      // Flush remaining buffers
+      if (stdoutBuffer) {
+        stdout += "\n" + stdoutBuffer;
+        if (win && win.webContents)
+          win.webContents.send("nomopro-python-stdout", stdoutBuffer);
+      }
+      if (stderrBuffer) {
+        stderr += "\n" + stderrBuffer;
+        if (win && win.webContents)
+          win.webContents.send("nomopro-python-stderr", stderrBuffer);
+      }
+
+      // NDJSON parse stdout for VM commands
+      const commands = [];
+      try {
+        const allLines = stdout.split(/\r?\n/);
+        for (const line of allLines) {
+          const t = line && line.trim();
+          if (!t) continue;
+          try {
+            const obj = JSON.parse(t);
+            if (obj && (obj.cmd || obj.action || Array.isArray(obj.args)))
+              commands.push(obj);
+          } catch (e) {
+            // ignore non-json lines
+          }
+        }
+      } catch (e) {
+        // ignore parse errors
+      }
+
+      resolve({ exitCode, signal, stdout, stderr, commands, timedOut: false });
+    });
+  });
+
+  // Race: close vs error vs timeout
+  return await Promise.race([closePromise, procError, timeoutPromise]);
+});
+
+ipcMain.handle("nomopro-python-write-stdin", async (event, data) => {
+  if (
+    currentPythonProc &&
+    currentPythonProc.stdin &&
+    currentPythonProc.stdin.writable
+  ) {
+    currentPythonProc.stdin.write(String(data) + "\n");
+    return { written: true };
+  }
+  return { written: false, reason: "no-process-or-stdin" };
+});
+
+ipcMain.handle("nomopro-python-stop", async () => {
+  if (currentPythonProc && !currentPythonProc.killed) {
+    try {
+      currentPythonProc.kill("SIGKILL");
+      currentPythonProc = null;
+      if (currentPythonTimeout) {
+        clearTimeout(currentPythonTimeout);
+        currentPythonTimeout = null;
+      }
+      return { stopped: true };
+    } catch (e) {
+      return { stopped: false, error: String(e) };
+    }
+  }
+  if (currentPythonTimeout) {
+    clearTimeout(currentPythonTimeout);
+    currentPythonTimeout = null;
+  }
+  return { stopped: false, reason: "no-process" };
+});
+
+ipcMain.handle("get-python-candidates", async () => {
+  return getPythonCandidates();
+});
+
+// ---- Startup health check for bundled Python ----
+app.whenReady().then(async () => {
+  // Run health check in background (non-blocking)
+  setTimeout(async () => {
+    try {
+      const candidates = getPythonCandidates();
+      let found = false;
+      for (const c of candidates) {
+        try {
+          const res = childProcess.spawnSync(c, ["--version"], {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          if (res.status === 0) {
+            const ver = (res.stdout || res.stderr || "").trim();
+            logger.info(`Python health check OK: ${c} -> ${ver}`);
+            found = true;
+            break;
+          }
+        } catch (e) {
+          // continue
+        }
+      }
+      if (!found) {
+        logger.warn(
+          `Python health check FAILED. No working interpreter found from candidates: ${candidates.join(", ")}`,
+        );
+      }
+    } catch (e) {
+      logger.warn(`Python health check error: ${e.message}`);
+    }
+  }, 3000); // Run 3s after startup
 });

@@ -268,22 +268,30 @@ class SerialportSession extends Session {
         return new Promise((resolve, reject) => {
             const { message, encoding } = params;
             const buffer = new Buffer.from(message, encoding);
+            console.log("[LINK_SERIAL_WRITE_RECEIVED]", buffer.length, "bytes, encoding:", encoding);
 
             try {
                 if (!this.isInDisconnect) {
                     this.peripheral.write(buffer, "binary", (err) => {
                         if (err) {
+                            console.error("[LINK_SERIAL_WRITE_ERROR]", err.message);
                             return reject(
                                 new Error(
                                     `Error while attempting to write: ${err.message}`
                                 )
                             );
                         }
+                        console.log("[LINK_SERIAL_WRITE_OK]", buffer.length, "bytes written");
                     });
-                    this.peripheral.drain(() => resolve(buffer.length));
+                    this.peripheral.drain(() => {
+                        console.log("[LINK_SERIAL_DRAIN_OK]", buffer.length, "bytes drained");
+                        resolve(buffer.length);
+                    });
+                } else {
+                    resolve();
                 }
-                return resolve();
             } catch (err) {
+                console.error("[LINK_SERIAL_WRITE_EXCEPTION]", err.message);
                 return reject(err);
             }
         });

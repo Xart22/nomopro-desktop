@@ -35,6 +35,12 @@ done:
 
 !macroend
 
+!macro customInstall
+    ; Enable long path support for Arduino toolchain (avr-gcc, ld.exe)
+    ; Windows 10 1607+ requires this key + longPathAware manifest
+    WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
+!macroend
+
 !macro customUnInstall
 
     ${If} ${RunningX64}
@@ -115,6 +121,3 @@ done:
   ${endIf}
   SetDetailsPrint none
 !macroend
-
-
-

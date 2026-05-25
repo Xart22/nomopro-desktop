@@ -1,0 +1,50 @@
+name: Desktop CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Install dependencies
+        run: npm ci
+      - name: Prepare python payload (manual step)
+        run: echo "Place python payload under build-resources/python/win64 before build"
+      - name: Build
+        run: npm run build -- --win
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nomopro-desktop-windows
+          path: dist/**
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Install dependencies
+        run: npm ci
+      - name: Prepare python payload (manual step)
+        run: echo "Place python payload under build-resources/python/mac before build"
+      - name: Build
+        run: npm run build -- --mac
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nomopro-desktop-macos
+          path: dist/**

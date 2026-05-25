@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="../assets/bootstrap-5.3.0-alpha1-dist/css/bootstrap.min.css"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --accent: #4b7bec;
+        --success: #0fbd8c;
+        --danger: #e74c5e;
+        --muted: #6b7280;
+        --bg: #f5f7fb;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        background: var(--bg);
+        -webkit-font-smoothing: antialiased;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+
+      .card {
+        width: 100%;
+        max-width: 480px;
+        border: none;
+        border-radius: 14px;
+        box-shadow: 0 10px 30px rgba(44, 62, 80, 0.08);
+        overflow: hidden;
+      }
+
+      .card-body {
+        padding: 28px 24px 24px;
+      }
+
+      .icon-wrap {
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto 16px;
+      }
+
+      .icon-wrap.spinner {
+        background: #e9f0ff;
+      }
+      .icon-wrap.success {
+        background: #e0f7f0;
+      }
+      .icon-wrap.error {
+        background: #fde8ea;
+      }
+
+      .status-icon {
+        width: 28px;
+        height: 28px;
+      }
+
+      .spinner-anim {
+        animation: spin 1.2s linear infinite;
+        transform-origin: center;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #0f1724;
+        text-align: center;
+        margin-bottom: 4px;
+      }
+
+      .subtitle {
+        font-size: 13px;
+        color: var(--muted);
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      .progress {
+        height: 8px;
+        border-radius: 4px;
+        background: #e6eefc;
+        margin-bottom: 16px;
+      }
+
+      .progress-bar {
+        background: var(--accent);
+        border-radius: 4px;
+        transition: width 0.3s ease;
+      }
+
+      .progress-bar.success {
+        background: var(--success);
+      }
+
+      .progress-bar.error {
+        background: var(--danger);
+      }
+
+      .log-area {
+        background: #1a1d23;
+        border-radius: 8px;
+        padding: 12px;
+        height: 180px;
+        overflow-y: auto;
+        margin-bottom: 16px;
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #cdd3de;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .log-area::-webkit-scrollbar {
+        width: 6px;
+      }
+      .log-area::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .log-area::-webkit-scrollbar-thumb {
+        background: #3a3f4b;
+        border-radius: 3px;
+      }
+
+      .log-line {
+        opacity: 0;
+        animation: fadeIn 0.2s ease forwards;
+      }
+
+      @keyframes fadeIn {
+        to {
+          opacity: 1;
+        }
+      }
+
+      .status-text {
+        font-size: 13px;
+        font-weight: 500;
+        text-align: center;
+        min-height: 20px;
+        color: var(--muted);
+      }
+
+      .status-text.success {
+        color: var(--success);
+      }
+      .status-text.error {
+        color: var(--danger);
+      }
+
+      .btn-close-custom {
+        display: none;
+        width: 100%;
+        padding: 10px;
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+        margin-top: 8px;
+      }
+
+      .btn-close-custom.visible {
+        display: block;
+      }
+
+      .btn-close-custom.success-btn {
+        background: var(--success);
+        color: #fff;
+      }
+      .btn-close-custom.success-btn:hover {
+        background: #0da87a;
+      }
+      .btn-close-custom.error-btn {
+        background: var(--danger);
+        color: #fff;
+      }
+      .btn-close-custom.error-btn:hover {
+        background: #d63d4f;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="card-body">
+        <div id="iconWrap" class="icon-wrap spinner">
+          <svg
+            class="status-icon spinner-anim"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#4b7bec"
+            stroke-width="2.5"
+            stroke-linecap="round"
+          >
+            <path d="M12 2a10 10 0 0 1 10 10" />
+          </svg>
+        </div>
+
+        <div class="title" id="titleText">Memperbarui Tools</div>
+        <div class="subtitle" id="subtitleText">
+          Mengunduh dan memasang komponen yang diperlukan...
+        </div>
+
+        <div class="progress">
+          <div
+            id="progressBar"
+            class="progress-bar progress-bar-striped progress-bar-animated"
+            style="width: 100%"
+          ></div>
+        </div>
+
+        <div class="log-area" id="logArea">
+          <div class="log-line">Menunggu proses update...</div>
+        </div>
+        <button class="btn-close-custom" id="closeBtn">Tutup</button>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const iconWrap = document.getElementById("iconWrap");
+        const titleText = document.getElementById("titleText");
+        const subtitleText = document.getElementById("subtitleText");
+        const progressBar = document.getElementById("progressBar");
+        const logArea = document.getElementById("logArea");
+        const statusText = document.getElementById("statusText");
+        const closeBtn = document.getElementById("closeBtn");
+
+        function addLog(message) {
+          const line = document.createElement("div");
+          line.className = "log-line";
+          line.textContent = message;
+          logArea.appendChild(line);
+          logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        function setState(state) {
+          iconWrap.className = "icon-wrap " + state;
+          progressBar.className = "progress-bar " + state;
+          statusText.className = "status-text " + state;
+
+          if (state === "success") {
+            iconWrap.innerHTML =
+              '<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="#0fbd8c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+            progressBar.style.width = "100%";
+            progressBar.classList.remove(
+              "progress-bar-striped",
+              "progress-bar-animated",
+            );
+            titleText.textContent = "Update Selesai";
+            subtitleText.textContent = "Tools Arduino berhasil diperbarui.";
+            statusText.textContent = "Selesai \u2713";
+            closeBtn.textContent = "Tutup";
+            closeBtn.className = "btn-close-custom visible success-btn";
+          } else if (state === "error") {
+            iconWrap.innerHTML =
+              '<svg class="status-icon" viewBox="0 0 24 24" fill="none" stroke="#e74c5e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+            progressBar.classList.remove(
+              "progress-bar-striped",
+              "progress-bar-animated",
+            );
+            progressBar.style.width = "100%";
+            titleText.textContent = "Update Gagal";
+            subtitleText.textContent =
+              "Terjadi kesalahan saat memperbarui tools Arduino.";
+            statusText.textContent = "Gagal";
+            closeBtn.textContent = "Tutup";
+            closeBtn.className = "btn-close-custom visible error-btn";
+          } else {
+            iconWrap.innerHTML =
+              '<svg class="status-icon spinner-anim" viewBox="0 0 24 24" fill="none" stroke="#4b7bec" stroke-width="2.5" stroke-linecap="round"><path d="M12 2a10 10 0 0 1 10 10" /></svg>';
+            progressBar.classList.add(
+              "progress-bar-striped",
+              "progress-bar-animated",
+            );
+            progressBar.style.width = "100%";
+          }
+        }
+
+        closeBtn.addEventListener("click", () => {
+          try {
+            window.arduinoUpdate.closeWindow();
+          } catch (e) {
+            addLog("Error menutup jendela: " + e.message);
+          }
+        });
+
+        document.addEventListener("DOMContentLoaded", function () {
+          if (typeof window.arduinoUpdate === "undefined") {
+            addLog(
+              "ERROR: window.arduinoUpdate tidak tersedia — periksa preload script",
+            );
+            return;
+          }
+          window.arduinoUpdate.onProgress(function (data) {
+            if (data.status === "start") {
+              addLog("Memulai proses update...");
+            } else if (data.status === "line") {
+              addLog(data.message);
+            } else if (data.status === "complete") {
+              addLog("");
+              addLog("Update selesai.");
+              setState("success");
+            } else if (data.status === "error") {
+              addLog("");
+              addLog("Error: " + (data.message || "Unknown error"));
+              setState("error");
+            }
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
