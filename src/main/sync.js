@@ -21,62 +21,46 @@ async function syncLibary(appRoot) {
     const response = await axios.get("https://nomo-kit.com/api/check-update");
     const data = response.data;
     if (data.version !== versionFile.version) {
-      fs.rmSync(path.join(appRoot, "src/link/tools/Arduino/libraries"), {
-        recursive: true,
-        force: true,
-      });
+      // Download first, then delete only on success
+      const librariesDir = path.join(appRoot, "src/link/tools/Arduino/libraries");
       const downloader = new Downloader({
         url: data.url,
-        directory: path.join(appRoot, "src/link/tools/Arduino/libraries"),
+        directory: librariesDir,
       });
 
       const { filePath, downloadStatus } = await downloader.download();
       if (downloadStatus === "COMPLETE") {
-        await extract(filePath, {
-          dir: path.join(appRoot, "src/link/tools/Arduino/libraries"),
-        });
+        // Delete old libraries after successful download
+        if (fs.existsSync(librariesDir)) {
+          fs.rmSync(librariesDir, { recursive: true, force: true });
+        }
+        fs.mkdirSync(librariesDir, { recursive: true });
+        await extract(filePath, { dir: librariesDir });
 
-        fs.readdir(
-          path.join(appRoot, "src/link/tools/Arduino/libraries"),
-          (err, files) => {
-            files.forEach(async (file) => {
-              if (file !== data.version + ".zip") {
-                await extract(
-                  path.join(
-                    appRoot,
-                    "src/link/tools/Arduino/libraries/" + file,
-                  ),
-                  {
-                    dir: path.join(appRoot, "src/link/tools/Arduino/libraries"),
-                  },
-                );
-                fs.unlinkSync(
-                  path.join(
-                    appRoot,
-                    "src/link/tools/Arduino/libraries/" + file,
-                  ),
-                );
-              } else {
-                fs.unlinkSync(
-                  path.join(appRoot, "src/link/tools/Arduino/libraries", file),
-                );
-              }
-            });
-          },
-        );
-        fs.readdir(
-          path.join(appRoot, "src/link/tools/Arduino/local"),
-          (err, files) => {
-            files.forEach(async (file) => {
-              fs.cpSync(
-                path.join(appRoot, "src/link/tools/Arduino/local/" + file),
-                path.join(appRoot, "src/link/tools/Arduino/libraries/" + file),
-                { recursive: true },
-              );
-            });
-          },
-        );
+        // Extract inner archives sequentially
+        const files = fs.readdirSync(librariesDir);
+        for (const file of files) {
+          if (file !== data.version + ".zip") {
+            await extract(path.join(librariesDir, file), { dir: librariesDir });
+            fs.unlinkSync(path.join(librariesDir, file));
+          } else {
+            fs.unlinkSync(path.join(librariesDir, file));
+          }
+        }
 
+        // Copy local files
+        if (fs.existsSync(localDir)) {
+          const localFiles = fs.readdirSync(localDir);
+          for (const file of localFiles) {
+            fs.cpSync(
+              path.join(localDir, file),
+              path.join(librariesDir, file),
+              { recursive: true },
+            );
+          }
+        }
+
+        // Write version only after everything is done
         fs.writeFileSync(
           path.join(appRoot, "src/link/tools/version.json"),
           JSON.stringify(data),
@@ -100,56 +84,52 @@ async function _syncResource(win, appRoot, windowUpdate, { logLabel, versionFiel
     const data = response.data;
     if (data[versionField] !== version[versionField]) {
       const { dialog } = require("electron");
-      dialog
-        .showMessageBox({
+      try {
+        const res = await dialog.showMessageBox({
           type: "question",
           title: "Update",
           message: "Update available for " + logLabel + ", do you want to update now?",
           buttons: ["Yes", "No"],
-        })
-        .then(async (res) => {
-          if (res.response === 0) {
-            win.loadFile(path.join(appRoot, "/src/update/index.html"));
-            const downloader = new Downloader({
-              url: data[urlField],
-              directory: path.join(appRoot, "src/update"),
-              onProgress: function (percentage) {
-                if (win && win.webContents)
-                  win.webContents.send("download-progress", percentage);
-              },
-            });
-            const { filePath, downloadStatus } = await downloader.download();
-            if (downloadStatus === "COMPLETE") {
-              fs.rmSync(path.join(appRoot, targetDir), {
-                recursive: true,
-                force: true,
-              });
-              await extract(filePath, { dir: path.join(appRoot, targetDir) });
-              fs.writeFileSync(
-                path.join(appRoot, "src/version.json"),
-                JSON.stringify(data),
-              );
-              dialog
-                .showMessageBox({
-                  type: "info",
-                  title: "Success",
-                  message: "Update success",
-                })
-                .then(() => {
-                  fs.readdir(path.join(appRoot, "src/update"), (err, files) => {
-                    files.forEach((file) => {
-                      if (file === zipName) {
-                        fs.unlinkSync(path.join(appRoot, "src/update", file));
-                      }
-                    });
-                  });
-                  const { app } = require("electron");
-                  app.relaunch();
-                  app.exit();
-                });
-            }
-          }
         });
+        if (res.response === 0) {
+          if (win && !win.isDestroyed()) {
+            win.loadFile(path.join(appRoot, "/src/update/index.html"));
+          }
+          const downloader = new Downloader({
+            url: data[urlField],
+            directory: path.join(appRoot, "src/update"),
+            onProgress: function (percentage) {
+              if (win && win.webContents && !win.isDestroyed())
+                win.webContents.send("download-progress", percentage);
+            },
+          });
+          const { filePath, downloadStatus } = await downloader.download();
+          if (downloadStatus === "COMPLETE") {
+            const targetPath = path.join(appRoot, targetDir);
+            if (fs.existsSync(targetPath)) {
+              fs.rmSync(targetPath, { recursive: true, force: true });
+            }
+            await extract(filePath, { dir: targetPath });
+            fs.writeFileSync(
+              path.join(appRoot, "src/version.json"),
+              JSON.stringify(data),
+            );
+            // Cleanup downloaded zip
+            try {
+              if (fs.existsSync(filePath) && path.basename(filePath) === zipName) {
+                fs.unlinkSync(filePath);
+              }
+            } catch (e) {
+              logger.warn("Failed to clean up update zip: " + e.message);
+            }
+            const { app } = require("electron");
+            app.relaunch();
+            app.exit();
+          }
+        }
+      } catch (dialogErr) {
+        logger.error("sync dialog error: " + dialogErr.message);
+      }
     }
   } catch (error) {
     logger.error("sync " + logLabel + " error: " + error.message);

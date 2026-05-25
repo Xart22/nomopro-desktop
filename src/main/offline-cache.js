@@ -14,6 +14,9 @@ const fs = require("fs");
 const logger = require("./logger");
 const { ipcMain } = require("electron");
 
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const patternForPackage = (name) => escapeRegex(name).replace(/[-_]/g, "[-_]");
+
 /**
  * Get the offline wheel cache directory
  */
@@ -109,7 +112,7 @@ const cachePackage = async (appRoot, packageName, pipCacheDir) => {
           const full = path.join(dir, entry.name);
           if (entry.isFile() && (entry.name.endsWith(".whl") || entry.name.endsWith(".tar.gz"))) {
             // Check if wheel matches the package
-            const namePart = packageName.toLowerCase().replace(/[-_]/g, "[-_]");
+            const namePart = patternForPackage(packageName.toLowerCase());
             if (entry.name.toLowerCase().match(new RegExp(namePart))) {
               wheels.push(full);
             }
@@ -152,7 +155,7 @@ const installFromCache = async (event, { appRoot, packageName }) => {
   const entries = fs.readdirSync(cacheDir);
   const matchingWheels = entries.filter((f) => {
     const name = f.toLowerCase();
-    const pn = packageName.toLowerCase().replace(/[-_]/g, "[-_]");
+    const pn = patternForPackage(packageName.toLowerCase());
     return name.match(new RegExp(pn)) && (f.endsWith(".whl") || f.endsWith(".tar.gz"));
   });
 
@@ -205,7 +208,7 @@ const removeFromCache = async (event, { appRoot, packageName }) => {
   }
 
   const entries = fs.readdirSync(cacheDir);
-  const pn = packageName.toLowerCase().replace(/[-_]/g, "[-_]");
+  const pn = patternForPackage(packageName.toLowerCase());
   let removed = 0;
 
   for (const entry of entries) {

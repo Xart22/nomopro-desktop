@@ -1,5 +1,7 @@
 const { shell, ipcRenderer, contextBridge } = require("electron");
 
+const registeredListeners = new Map();
+
 window.addEventListener("DOMContentLoaded", async () => {
   const btn = document.getElementById("login");
   const error = document.getElementById("error");
@@ -37,6 +39,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   }
   function login() {
+    if (!email || !password) return;
     if (email.value !== "" && password.value !== "") {
       ipcRenderer.send("login", {
         email: email.value,
@@ -48,7 +51,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  if (error !== null) {
+  if (error !== null && btn !== null && email !== null && password !== null) {
     btn.addEventListener("click", async () => {
       login();
     });
@@ -62,29 +65,31 @@ window.addEventListener("DOMContentLoaded", async () => {
       email.classList.remove("is-invalid");
       password.classList.remove("is-invalid");
     });
-    ipcRenderer.on("login-fail", (event, arg) => {
+    // Ensure only one login-fail listener
+    const loginFailHandler = (event, arg) => {
       error.style.display = "block";
-      email.classList.add("is-invalid");
-      password.classList.add("is-invalid");
-      error.innerHTML = "Email atau password salah";
-    });
-    // ipcRenderer.on("no-subscription", (event, arg) => {
-    //   error.style.display = "block";
-    //   error.innerHTML = "Anda belum memiliki paket langganan";
-    // });
+      error.textContent = "Email atau password salah";
+    };
+    ipcRenderer.removeListener("login-fail", loginFailHandler);
+    ipcRenderer.on("login-fail", loginFailHandler);
   }
 
-  ipcRenderer.on("download-progress", function (event, text) {
+  // Ensure only one download-progress listener
+  const downloadHandler = (event, text) => {
     const progress = document.getElementById("progress-bar");
     const textProgress = document.getElementById("textUpdate");
-    progress.style.width = text + "%";
-    progress.innerHTML = text + "%";
-    if (text.includes("100")) {
+    if (!progress || !textProgress) return;
+    const pct = String(text || "0");
+    progress.style.width = pct + "%";
+    progress.textContent = pct + "%";
+    if (pct.includes("100")) {
       progress.style.width = "100%";
-      progress.innerHTML = "%";
-      textProgress.innerHTML = "Instaling...";
+      progress.textContent = "100%";
+      textProgress.textContent = "Installing...";
     }
-  });
+  };
+  ipcRenderer.removeListener("download-progress", downloadHandler);
+  ipcRenderer.on("download-progress", downloadHandler);
 });
 
 contextBridge.exposeInMainWorld("electronAPI", {
@@ -92,17 +97,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPythonCandidates: async () => {
     return await ipcRenderer.invoke("get-python-candidates");
   },
-  // Async invoke-based getUserData
+  // Send-based getUserData (renderer uses responseUserData event pattern)
   getUserData: () => {
     ipcRenderer.send("getUserData", "");
   },
   // Channel subscription for main->renderer events
   on: (channel, func) => {
-    ipcRenderer.on(channel, (event, ...args) => func(event, ...args));
+    // Store the wrapper so removeListener can find it
+    const wrapper = (event, ...args) => func(event, ...args);
+    registeredListeners.set(func, { channel, wrapper });
+    ipcRenderer.on(channel, wrapper);
   },
   // Remove listener for cleanup
   removeListener: (channel, func) => {
-    ipcRenderer.removeListener(channel, func);
+    const entry = registeredListeners.get(func);
+    if (entry && entry.channel === channel) {
+      ipcRenderer.removeListener(channel, entry.wrapper);
+      registeredListeners.delete(func);
+    }
   },
   // File storage API
   fileStorage: {
@@ -158,9 +170,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     },
     // Subscribe to pip progress events from main process
     onProgress: (callback) => {
-      ipcRenderer.on("pip-operation-progress", (event, data) => callback(data));
+      const handler = (event, data) => callback(data);
+      ipcRenderer.on("pip-operation-progress", handler);
       return () => {
-        ipcRenderer.removeAllListeners("pip-operation-progress");
+        ipcRenderer.removeListener("pip-operation-progress", handler);
       };
     },
   },

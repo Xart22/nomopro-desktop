@@ -3,6 +3,7 @@ const path = require("path");
 const { EventEmitter } = require("events");
 const { Menu, dialog, shell } = require("electron");
 const { execSync } = require("child_process");
+const logger = require("./logger");
 
 const { runArduinoCoreAction } = require("./arduino-updater");
 const { showArduinoUpdateWindow } = require("./arduino-update-window");
@@ -70,12 +71,22 @@ function showInstalledCores(appRoot) {
 }
 
 function setMenu({ win, appRoot, app }) {
-  const localLib = JSON.parse(
-    fs.readFileSync(path.join(appRoot, "src/link/tools/localLib.json"), "utf8"),
-  );
-  const version = JSON.parse(
-    fs.readFileSync(path.join(appRoot, "src/version.json"), "utf8"),
-  );
+  let localLib = [];
+  let version = {};
+  try {
+    localLib = JSON.parse(
+      fs.readFileSync(path.join(appRoot, "src/link/tools/localLib.json"), "utf8"),
+    );
+  } catch (e) {
+    logger.warn("Failed to read localLib.json: " + e.message);
+  }
+  try {
+    version = JSON.parse(
+      fs.readFileSync(path.join(appRoot, "src/version.json"), "utf8"),
+    );
+  } catch (e) {
+    logger.warn("Failed to read version.json: " + e.message);
+  }
   const libary = localLib.map((item, index) => ({
     label: `${index + 1}. ${item}`,
   }));

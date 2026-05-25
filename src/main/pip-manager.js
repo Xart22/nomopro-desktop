@@ -16,12 +16,32 @@ const logger = require("./logger");
 const { ipcMain } = require("electron");
 const { walkDirSize } = require("./utils");
 
-let winRef = null;
 let bundledPythonDirRef = null;
+let systemPythonCache = null;
 
 // Lock for pip operations (prevents concurrent install/uninstall)
 let pipLock = false;
 let pipLockQueue = [];
+
+const withPipLock = async (fn) => {
+  if (pipLock) {
+    return new Promise((resolve) => {
+      pipLockQueue.push(() => {
+        resolve(fn());
+      });
+    });
+  }
+  pipLock = true;
+  try {
+    return await fn();
+  } finally {
+    pipLock = false;
+    if (pipLockQueue.length > 0) {
+      const next = pipLockQueue.shift();
+      next();
+    }
+  }
+};
 
 /**
  * Get the user data directory for virtualenv
@@ -52,6 +72,7 @@ const getVenvPaths = (appRoot) => {
  * @returns {string|null} full path or command name, null if none found
  */
 const findSystemPython = (appRoot) => {
+  if (systemPythonCache) return systemPythonCache;
   // 1) Check bundledPythonDirRef first (correct path when packaged)
   if (bundledPythonDirRef) {
     const bundled = process.platform === "win32"
@@ -68,6 +89,7 @@ const findSystemPython = (appRoot) => {
           const match = ver.match(/(\d+)\.(\d+)/);
           if (match && parseInt(match[1], 10) >= 3 && parseInt(match[2], 10) >= 8) {
             logger.info(`Using bundled Python: ${bundled} -> ${ver}`);
+            systemPythonCache = bundled;
             return bundled;
           }
         }
@@ -95,6 +117,7 @@ const findSystemPython = (appRoot) => {
             const match = ver.match(/(\d+)\.(\d+)/);
             if (match && parseInt(match[1], 10) >= 3 && parseInt(match[2], 10) >= 8) {
               logger.info(`Using bundled Python: ${bundled} -> ${ver}`);
+              systemPythonCache = bundled;
               return bundled;
             }
           }
@@ -105,7 +128,7 @@ const findSystemPython = (appRoot) => {
     }
   }
 
-  // 2) Fallback to system PATH
+  // Fallback to system PATH
   const candidates = ["python3", "python", "py"];
   for (const c of candidates) {
     try {
@@ -119,6 +142,7 @@ const findSystemPython = (appRoot) => {
         const match = ver.match(/(\d+)\.(\d+)/);
         if (match && parseInt(match[1], 10) >= 3 && parseInt(match[2], 10) >= 8) {
           logger.info(`Using system Python: ${c} -> ${ver}`);
+          systemPythonCache = c;
           return c;
         }
       }
@@ -126,6 +150,7 @@ const findSystemPython = (appRoot) => {
       // continue
     }
   }
+  systemPythonCache = null;
   return null;
 };
 
@@ -304,7 +329,7 @@ const ensureVirtualEnv = (appRoot) => {
   logger.info(`Creating virtualenv at ${venvPaths.venvDir} using ${systemPython}...`);
 
   // If using bundled Python, ensure venv/virtualenv is available
-  const isBundled = path.isAbsolute(systemPython) && systemPython.includes("python");
+  const isBundled = bundledPythonDirRef && systemPython.startsWith(bundledPythonDirRef);
   if (isBundled) {
     const ready = ensureBundledPythonReady(systemPython);
     if (!ready) {
@@ -383,21 +408,28 @@ const sendProgress = (event, data) => {
       event.sender.send("pip-operation-progress", data);
     }
   } catch (e) {
-    // ignore send errors
+    logger.warn(`sendProgress error: ${e.message}`);
   }
+};
+
+const validatePackageName = (name) => {
+  if (!name || typeof name !== "string") return "Package name is required";
+  // Block pip flags/options being passed as package names
+  if (name.startsWith("-") || name.startsWith("--")) return "Package name cannot start with '-'";
+  // Only allow valid PyPI package name characters plus / @ for URL/VCS installs
+  if (/[<>|;&$`\\]/.test(name)) return "Package name contains invalid characters";
+  return null;
 };
 
 /**
  * Install a package via pip in the virtualenv
  */
 const installPackage = async (event, { appRoot, packageName, upgrade = false, pre = false }) => {
-  if (pipLock) {
-    return { success: false, error: "Another pip operation is in progress", locked: true };
+  const validationError = validatePackageName(packageName);
+  if (validationError) {
+    return { success: false, error: validationError };
   }
-
-  pipLock = true;
-  try {
-    // Ensure venv exists
+  return withPipLock(async () => {
     const venvResult = ensureVirtualEnv(appRoot);
     if (!venvResult.success) {
       return venvResult;
@@ -410,11 +442,10 @@ const installPackage = async (event, { appRoot, packageName, upgrade = false, pr
     if (pre) args.push("--pre");
     args.push(packageName);
 
-    // Use --quiet for machine parsing, but we'll parse the output
     const proc = spawn(venvResult.venvPaths.pip, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 120000, // 2 min timeout
+      timeout: 120000,
     });
 
     let stdout = "";
@@ -425,13 +456,14 @@ const installPackage = async (event, { appRoot, packageName, upgrade = false, pr
       stdout += text;
       sendProgress(event, { type: "install-output", data: text });
     });
+    proc.stdout.on("error", (err) => logger.warn(`pip stdout error: ${err.message}`));
 
     proc.stderr.on("data", (chunk) => {
       const text = String(chunk || "");
       stderr += text;
-      // pip sometimes outputs progress to stderr
       sendProgress(event, { type: "install-output", data: text });
     });
+    proc.stderr.on("error", (err) => logger.warn(`pip stderr error: ${err.message}`));
 
     return await new Promise((resolve) => {
       proc.on("close", (code) => {
@@ -441,14 +473,7 @@ const installPackage = async (event, { appRoot, packageName, upgrade = false, pr
           exitCode: code,
           package: packageName,
         });
-
-        resolve({
-          success,
-          exitCode: code,
-          stdout,
-          stderr,
-          package: packageName,
-        });
+        resolve({ success, exitCode: code, stdout, stderr, package: packageName });
       });
 
       proc.on("error", (err) => {
@@ -456,26 +481,18 @@ const installPackage = async (event, { appRoot, packageName, upgrade = false, pr
         resolve({ success: false, error: err.message });
       });
     });
-  } finally {
-    pipLock = false;
-    // Process next queued operation
-    if (pipLockQueue.length > 0) {
-      const next = pipLockQueue.shift();
-      next();
-    }
-  }
+  });
 };
 
 /**
  * Uninstall a package from virtualenv
  */
 const uninstallPackage = async (event, { appRoot, packageName }) => {
-  if (pipLock) {
-    return { success: false, error: "Another pip operation is in progress", locked: true };
+  const validationError = validatePackageName(packageName);
+  if (validationError) {
+    return { success: false, error: validationError };
   }
-
-  pipLock = true;
-  try {
+  return withPipLock(async () => {
     const venvResult = ensureVirtualEnv(appRoot);
     if (!venvResult.success) {
       return venvResult;
@@ -505,13 +522,7 @@ const uninstallPackage = async (event, { appRoot, packageName }) => {
       stderr: result.stderr,
       package: packageName,
     };
-  } finally {
-    pipLock = false;
-    if (pipLockQueue.length > 0) {
-      const next = pipLockQueue.shift();
-      next();
-    }
-  }
+  });
 };
 
 /**
@@ -642,10 +653,12 @@ const runInVenv = async (event, { appRoot, code }) => {
     proc.stdout.on("data", (chunk) => {
       stdout += String(chunk || "");
     });
+    proc.stdout.on("error", (err) => logger.warn(`runInVenv stdout error: ${err.message}`));
 
     proc.stderr.on("data", (chunk) => {
       stderr += String(chunk || "");
     });
+    proc.stderr.on("error", (err) => logger.warn(`runInVenv stderr error: ${err.message}`));
 
     proc.on("close", (code) => {
       resolve({ success: code === 0, exitCode: code, stdout, stderr });
@@ -661,7 +674,6 @@ const runInVenv = async (event, { appRoot, code }) => {
  * Register all pip IPC handlers
  */
 const registerPipHandlers = ({ appRoot, win, bundledPythonDir }) => {
-  winRef = win;
   bundledPythonDirRef = bundledPythonDir || null;
 
   ipcMain.handle("pip-install", async (event, { packageName, upgrade, pre }) => {

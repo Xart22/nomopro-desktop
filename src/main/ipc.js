@@ -28,8 +28,12 @@ const ensureDefaultStorageDir = () => {
   } catch (e) {
     // If Documents path fails, fallback to app-local data
     const fallback = path.join(__dirname, "..", "..", "data", "projects");
-    if (!fs.existsSync(fallback)) {
-      fs.mkdirSync(fallback, { recursive: true });
+    try {
+      if (!fs.existsSync(fallback)) {
+        fs.mkdirSync(fallback, { recursive: true });
+      }
+    } catch (e2) {
+      logger.error(`Failed to create fallback directory: ${e2.message}`);
     }
     return fallback;
   }
@@ -46,7 +50,7 @@ const registerFileStorageHandlers = () => {
       // Conflict handling: if file exists, rename with (1), (2), etc.
       let finalPath = targetPath;
       let counter = 1;
-      while (fs.existsSync(finalPath)) {
+      while (fs.existsSync(finalPath) && counter < 1000) {
         const ext = path.extname(safeName);
         const base = path.basename(safeName, ext);
         finalPath = path.join(dir, `${base} (${counter})${ext}`);
@@ -123,27 +127,41 @@ function registerIpc({ win, appRoot, socket }) {
   ipcMain.on("login", async (event, arg) => {
     logger.info("Login (ipc)");
     const hwid = getHwid();
-    arg.hwid = hwid;
-    arg.app = "nomopro";
+    const loginArg = { ...arg, hwid, app: "nomopro" };
     try {
-      const res = await axios.post("https://nomo-kit.com/api/login", arg);
-      fs.writeFileSync(
-        path.join(appRoot, "/data/user.json"),
-        JSON.stringify(res.data),
-      );
+      const res = await axios.post("https://nomo-kit.com/api/login", loginArg);
+      try {
+        fs.writeFileSync(
+          path.join(appRoot, "/data/user.json"),
+          JSON.stringify(res.data),
+        );
+      } catch (writeErr) {
+        logger.error("Failed to save user.json: " + writeErr.message);
+        if (event.sender && !event.sender.isDestroyed()) {
+          event.reply("login-fail", { error: "Failed to save login data" });
+        }
+        return;
+      }
       socket.emit("login", res.data);
-      // refresh menu and load gui
       const { setMenu } = require(path.join(appRoot, "src/main/menu"));
       setMenu({ win, appRoot, app: require("electron").app });
-      win.loadFile(path.join(appRoot, "/src/gui/index.html"));
+      if (win && !win.isDestroyed()) {
+        win.loadFile(path.join(appRoot, "/src/gui/index.html"));
+      }
     } catch (err) {
       logger.error("login error: " + (err?.message || "unknown"));
-      event.reply("login-fail", err?.response?.data ?? { error: "unknown" });
+      if (event.sender && !event.sender.isDestroyed()) {
+        event.reply("login-fail", err?.response?.data ?? { error: "unknown" });
+      }
     }
   });
 
   ipcMain.on("logout", async (event, arg) => {
-    fs.writeFileSync(path.join(appRoot, "data/user.json"), JSON.stringify({}));
+    try {
+      fs.writeFileSync(path.join(appRoot, "data/user.json"), JSON.stringify({}));
+    } catch (e) {
+      logger.error(`Failed to clear user.json on logout: ${e.message}`);
+    }
     if (win && !win.isDestroyed())
       win.loadFile(path.join(appRoot, "/src/auth/index.html"));
   });
@@ -152,22 +170,23 @@ function registerIpc({ win, appRoot, socket }) {
   ipcMain.on("getUserData", (event, arg) => {
     const userDataFilePath = path.join(appRoot, "data", "user.json");
     fs.readFile(userDataFilePath, "utf8", (err, data) => {
+      const sendResponse = (payload) => {
+        if (event.sender && !event.sender.isDestroyed()) {
+          event.sender.send("responseUserData", payload);
+        }
+      };
       if (err) {
         logger.error("Error reading user data: " + err.message);
-        event.sender.send("responseUserData", {
-          error: "Failed to read user data",
-        });
+        sendResponse({ error: "Failed to read user data" });
         return;
       }
       try {
         const parsedData = JSON.parse(data);
         const userId = parsedData.user?.id;
-        event.sender.send("responseUserData", { id: userId });
+        sendResponse({ id: userId });
       } catch (e) {
         logger.error("Error parsing user data: " + e.message);
-        event.sender.send("responseUserData", {
-          error: "Failed to parse user data",
-        });
+        sendResponse({ error: "Failed to parse user data" });
       }
     });
   });

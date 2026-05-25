@@ -387,6 +387,9 @@ console.log("==========================================\n");
 if (testsFailed > 0) {
   console.error("Some tests failed!");
   process.exit(1);
+} else if (testsPassed === 0 && testsSkipped > 0) {
+  console.error("No tests were executed (all skipped). Check Python availability.");
+  process.exit(1);
 } else {
   console.log("All executed tests passed!");
   process.exit(0);

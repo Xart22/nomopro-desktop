@@ -24,12 +24,19 @@ const getDepsDir = (appRoot) => {
 /**
  * Get the path to a project's requirements file
  */
+const sanitizeProjectId = (id) => {
+  if (!id) return "default";
+  // Only allow alphanumeric, hyphens, underscores, dots
+  return String(id).replace(/[^a-zA-Z0-9_\-.]/g, "_");
+};
+
 const getRequirementsPath = (appRoot, projectId) => {
   const dir = getDepsDir(appRoot);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  return path.join(dir, `${projectId || "default"}-requirements.txt`);
+  const safeId = sanitizeProjectId(projectId);
+  return path.join(dir, `${safeId}-requirements.txt`);
 };
 
 /**

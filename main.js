@@ -1,5 +1,4 @@
-const { app, BrowserWindow, dialog, Menu, shell } = require("electron");
-const OpenBlockLink = require("./src/link/src");
+const { app, BrowserWindow, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const logger = require("./src/main/logger");
@@ -10,14 +9,15 @@ autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
 let win;
-//http://15.235.140.95:2023
-const socket = io("http://15.235.140.95:2023", {
-  reconnection: true,
-  timeout: 10000,
-});
-let token = JSON.parse(
-  fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8"),
-);
+let socket = null;
+let token = {};
+try {
+  token = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "data/user.json"), "utf8"),
+  );
+} catch (e) {
+  logger.warn("Failed to read user.json, starting with empty token");
+}
 
 const getPythonCandidates = () => {
   const candidates = [];
@@ -84,22 +84,26 @@ const syncLibary = async () => _syncLibary(appRoot);
 
 app.commandLine.appendSwitch("ignore-certificate-errors");
 const createWindow = () => {
+  // Initialize socket inside createWindow so handlers can be registered before connect events
+  socket = io("http://15.235.140.95:2023", {
+    reconnection: true,
+    timeout: 10000,
+  });
   win = new BrowserWindow({
     width: 1620,
     height: 900,
     webPreferences: {
-      nodeIntegration: true,
+      nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, "preload.js"),
     },
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
     title: "Nomopro-Desktop" + " - " + "v" + app.getVersion(),
   });
-  win.webContents.openDevTools();
+  if (!app.isPackaged) win.webContents.openDevTools();
   logger.info("socket.connected: " + socket.connected);
   // Load initial page based on current state
   if (socket.connected) {
-    // Already connected, load appropriate page
     if (token.token !== undefined) {
       win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
@@ -107,7 +111,6 @@ const createWindow = () => {
     }
   } else {
     if (token.token !== undefined) {
-      // Wait for connection to load GUI
       setMenu();
       win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
@@ -137,9 +140,6 @@ const createWindow = () => {
   registerOfflineCacheHandlers({ appRoot });
   registerRecoveryHandlers({ appRoot });
   initSocket({ socket, appRoot, win });
-  win.on("close", async () => {
-    win.destroy();
-  });
 
   //  START: Link server
   const { startLink: _startLink } = require("./src/main/link");
@@ -158,7 +158,6 @@ app.whenReady().then(async () => {
 });
 
 app.on("ready", async () => {
-  autoUpdater.checkForUpdatesAndNotify();
   autoUpdater.on("update-available", () => {
     if (process.platform === "darwin") {
       dialog
@@ -175,7 +174,8 @@ app.on("ready", async () => {
           if (result.response === 0) {
             shell.openExternal("https://nomo-kit.com/download-macos");
           }
-        });
+        })
+        .catch((err) => logger.warn("Update dialog error: " + err.message));
     } else {
       dialog
         .showMessageBox({
@@ -188,10 +188,13 @@ app.on("ready", async () => {
         })
         .then((result) => {
           if (result.response === 0) {
-            win.loadFile(path.join(__dirname, "/src/update/index.html"));
-            autoUpdater.downloadUpdate();
+            if (win && !win.isDestroyed()) {
+              win.loadFile(path.join(__dirname, "/src/update/index.html"));
+              autoUpdater.downloadUpdate();
+            }
           }
-        });
+        })
+        .catch((err) => logger.warn("Update dialog error: " + err.message));
     }
   });
   autoUpdater.on("update-downloaded", () => {
@@ -209,27 +212,32 @@ app.on("ready", async () => {
           autoUpdater.quitAndInstall(false, false);
           app.quit();
         }
-      });
+      })
+      .catch((err) => logger.warn("Update dialog error: " + err.message));
   });
   autoUpdater.on("error", (err) => {
-    dialog.showErrorBox("Error: ", err == null ? "unknown" : err);
+    dialog.showErrorBox("Error: ", err == null ? "unknown" : (err.message || String(err)));
   });
   autoUpdater.on("download-progress", (progressObj) => {
-    win.webContents.send("download-progress", progressObj.percent);
+    if (win && win.webContents && !win.isDestroyed()) {
+      win.webContents.send("download-progress", progressObj.percent);
+    }
   });
+  // Register all listeners before triggering the update check
+  autoUpdater.checkForUpdatesAndNotify();
 });
 
 app.on("window-all-closed", () => {
-  socket.emit("logout", token);
-  win.destroy();
-  app.exit();
+  if (socket) {
+    socket.emit("logout", token);
+  }
+  app.quit();
 });
 
 const setMenu = () => _setMenu({ win, appRoot, app });
 
-app.on("before-quit", (event) => {
-  event.preventDefault();
-  win.destroy();
+app.on("before-quit", () => {
+  // cleanup handled by window-all-closed
 });
 
 // ipc handlers and socket listeners are registered by modules in createWindow
@@ -355,18 +363,18 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
     }
   });
 
-  // Error handler - prevents hanging promise on spawn failure
-  const procError = new Promise((_, reject) => {
-    proc.on("error", (err) => {
-      killCurrentPython();
-      reject(new Error(`Python process error: ${err.message}`));
-    });
+  // Error handler - closes process and triggers cleanup
+  proc.on("error", (err) => {
+    killCurrentPython();
+    logger.warn(`Python process error: ${err.message}`);
   });
 
   // Timeout guard
   let timeoutId;
+  let timeoutTriggered = false;
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
+      timeoutTriggered = true;
       timedOut = true;
       killCurrentPython();
       reject(
@@ -383,6 +391,9 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
         clearTimeout(timeoutId);
         currentPythonTimeout = null;
       }
+      if (currentPythonProc === proc) {
+        currentPythonProc = null;
+      }
       if (timedOut) {
         resolve({
           exitCode: -1,
@@ -394,7 +405,6 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
         });
         return;
       }
-      currentPythonProc = null;
 
       // Flush remaining buffers
       if (stdoutBuffer) {
@@ -431,8 +441,12 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
     });
   });
 
-  // Race: close vs error vs timeout
-  return await Promise.race([closePromise, procError, timeoutPromise]);
+  // Race: close vs timeout (error is handled via logger, not via reject)
+  return await Promise.race([closePromise, timeoutPromise]).catch((err) => {
+    // timeout rejection is expected; closePromise already resolved
+    if (!timeoutTriggered) throw err;
+    return { exitCode: -1, signal: "SIGTERM", stdout, stderr: stderr + "\n[Execution timed out]", commands: [], timedOut: true };
+  });
 });
 
 ipcMain.handle("nomopro-python-write-stdin", async (event, data) => {

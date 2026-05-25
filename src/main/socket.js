@@ -34,14 +34,22 @@ function initSocket({ socket, appRoot, win }) {
       const token = JSON.parse(
         fs.readFileSync(path.join(appRoot, "data/user.json"), "utf8"),
       );
-      if (data == token.token) {
-        await axios.get("https://nomo-kit.com/api/logout", {
-          headers: { Authorization: "Bearer " + token.token },
-        });
-        fs.writeFileSync(
-          path.join(appRoot, "data/user.json"),
-          JSON.stringify({}),
-        );
+      if (data === token.token) {
+        try {
+          await axios.get("https://nomo-kit.com/api/logout", {
+            headers: { Authorization: "Bearer " + token.token },
+          });
+        } catch (e) {
+          logger.warn("Logout request failed, continuing: " + e.message);
+        }
+        try {
+          fs.writeFileSync(
+            path.join(appRoot, "data/user.json"),
+            JSON.stringify({}),
+          );
+        } catch (e) {
+          logger.error("Failed to clear user.json: " + e.message);
+        }
         dialog.showErrorBox(
           "Error: ",
           "Seseorang telah login dengan akun anda, silahkan login kembali",
