@@ -266,16 +266,45 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return await ipcRenderer.invoke("recovery-verify-shortcuts");
     },
   },
-  // MicroPython flashing API
+  // MicroPython flashing & upload API
   micropython: {
-    flash: async (portPath) => {
-      return await ipcRenderer.invoke("micropython-flash", { portPath });
+    flash: async (portPathOrParams) => {
+      const params = typeof portPathOrParams === 'string' ?
+        { portPath: portPathOrParams } :
+        (portPathOrParams || {});
+      return await ipcRenderer.invoke("micropython-flash", params);
+    },
+    upload: async (params) => {
+      return await ipcRenderer.invoke("micropython-upload", params);
+    },
+    detect: async (params) => {
+      return await ipcRenderer.invoke("micropython-detect", params || {});
+    },
+    sendInput: (params) => {
+      ipcRenderer.send("micropython-input", params);
     },
     onFlashProgress: (callback) => {
       const handler = (event, data) => callback(data);
       ipcRenderer.on("micropython-flash-progress", handler);
       return () => {
         ipcRenderer.removeListener("micropython-flash-progress", handler);
+      };
+    },
+    onProgress: (callback) => {
+      const flashHandler = (event, data) => callback(data);
+      const uploadHandler = (event, data) => callback(data);
+      ipcRenderer.on("micropython-flash-progress", flashHandler);
+      ipcRenderer.on("micropython-progress", uploadHandler);
+      return () => {
+        ipcRenderer.removeListener("micropython-flash-progress", flashHandler);
+        ipcRenderer.removeListener("micropython-progress", uploadHandler);
+      };
+    },
+    onSerialOutput: (callback) => {
+      const handler = (event, data) => callback(data);
+      ipcRenderer.on("micropython-serial-data", handler);
+      return () => {
+        ipcRenderer.removeListener("micropython-serial-data", handler);
       };
     },
   },

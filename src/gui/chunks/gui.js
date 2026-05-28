@@ -98,10 +98,10 @@ __webpack_require__.r(__webpack_exports__);
 Object(_lib_analytics__WEBPACK_IMPORTED_MODULE_7__["initialAnalytics"])(); // Register "base" page view
 
 _lib_analytics__WEBPACK_IMPORTED_MODULE_7__["default"].send({
-  hitType: "pageview",
-  page: "/community/web"
+  hitType: 'pageview',
+  page: '/community/web'
 });
-var appTarget = document.createElement("div");
+var appTarget = document.createElement('div');
 appTarget.className = _index_css__WEBPACK_IMPORTED_MODULE_11___default.a.app;
 document.body.appendChild(appTarget);
 
@@ -158,39 +158,39 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
 
 
 var onClickLogo = function onClickLogo() {
-  window.location = "https://nomo-kit.com/home";
+  window.location = 'https://nomo-kit.com/home';
 };
 
 var onClickCheckUpdate = function onClickCheckUpdate() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User click check update");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User click check update');
 };
 
 var onClickUpdate = function onClickUpdate() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User click update");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User click update');
 };
 
 var onAbortUpdate = function onAbortUpdate() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User click abort update");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User click abort update');
 };
 
 var onClickClearCache = function onClickClearCache() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User click clear cahce");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User click clear cahce');
 };
 
 var onClickInstallDriver = function onClickInstallDriver() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User click install driver");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User click install driver');
 };
 
 var handleTelemetryModalCancel = function handleTelemetryModalCancel() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User canceled telemetry modal");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User canceled telemetry modal');
 };
 
 var handleTelemetryModalOptIn = function handleTelemetryModalOptIn() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User opted into telemetry");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User opted into telemetry');
 };
 
 var handleTelemetryModalOptOut = function handleTelemetryModalOptOut() {
-  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("User opted out of telemetry");
+  Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('User opted out of telemetry');
 };
 
 var onClickAbout = [{
@@ -199,7 +199,7 @@ var onClickAbout = [{
     id: "gui.desktopMenuBar.about"
   }),
   onClick: function onClick() {
-    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("About");
+    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('About');
   }
 }, {
   title: /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(react_intl__WEBPACK_IMPORTED_MODULE_3__["FormattedMessage"], {
@@ -207,7 +207,7 @@ var onClickAbout = [{
     id: "gui.desktopMenuBar.license"
   }),
   onClick: function onClick() {
-    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("License");
+    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('License');
   }
 }, {
   title: /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(react_intl__WEBPACK_IMPORTED_MODULE_3__["FormattedMessage"], {
@@ -215,7 +215,7 @@ var onClickAbout = [{
     id: "gui.menuBar.privacyPolicy"
   }),
   onClick: function onClick() {
-    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("Privacy Policy");
+    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('Privacy Policy');
   }
 }, {
   title: /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(react_intl__WEBPACK_IMPORTED_MODULE_3__["FormattedMessage"], {
@@ -223,7 +223,7 @@ var onClickAbout = [{
     id: "gui.menuBar.dataSettings"
   }),
   onClick: function onClick() {
-    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])("Data Settings");
+    return Object(_lib_log_js__WEBPACK_IMPORTED_MODULE_7__["default"])('Data Settings');
   }
 }];
 

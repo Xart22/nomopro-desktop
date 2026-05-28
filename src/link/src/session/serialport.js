@@ -4,9 +4,12 @@ const ansi = require("ansi-string");
 const Session = require("./session");
 const Arduino = require("../upload/arduino");
 const Microbit = require("../upload/microbit");
+const MicroPython = require("../upload/micropython");
 const usbId = require("../lib/usb-id");
 
 const PERIPHERAL_UNPLUG_CHECK_INTERVAL = 100;
+
+const log = msg => console.log(`[MICROPYTHON ${new Date().toISOString().slice(11, 19)}] ${msg}`);
 
 class SerialportSession extends Session {
   constructor(socket, userDataPath, toolsPath) {
@@ -178,7 +181,7 @@ class SerialportSession extends Session {
 
             // Scan COM status prevent device pulled out
             this.connectStateDetectorTimer = setInterval(() => {
-              if (this.peripheral.isOpen === false) {
+              if (this.peripheral && this.peripheral.isOpen === false) {
                 clearInterval(this.connectStateDetectorTimer);
                 this.disconnect();
                 this.sendRemoteRequest("peripheralUnplug", null);
@@ -192,9 +195,13 @@ class SerialportSession extends Session {
             });
 
             port.on("error", (error) => {
-              console.log("OpenBlock Link Error:", error);
-              this.disconnect();
-              this.sendRemoteRequest("peripheralUnplug", null);
+              log(`Port error: ${error.message} | isInDisconnect=${this.isInDisconnect}`);
+              if (!this.isInDisconnect) {
+                this.disconnect();
+                this.sendRemoteRequest("peripheralUnplug", null);
+              } else {
+                log('Port error suppressed (intentional disconnect)');
+              }
             });
 
             resolve();
@@ -405,6 +412,93 @@ class SerialportSession extends Session {
             message: ansi.red + err.message,
           });
           this.sendRemoteRequest("peripheralUnplug", null);
+        }
+        break;
+      case "micropython":
+        this.tool = new MicroPython(
+          this.peripheral.path,
+          config,
+          this.userDataPath,
+          this.toolsPath,
+          this.sendstd.bind(this),
+        );
+        try {
+          if (config.detectOnly) {
+            // Firmware detection — no disconnect
+            const result = await this.tool.detectFirmware(this.peripheral.path, config.baudRate || 115200);
+            this.sendRemoteRequest("uploadSuccess", { detected: result });
+          } else if (config.flashOnly) {
+            // Flash firmware — needs disconnect
+            log('Flash starting — blocking detectors');
+            this.isInDisconnect = true;
+            // Stop unplug detector so GUI doesn't show "lost connection"
+            if (this.connectStateDetectorTimer) {
+              clearInterval(this.connectStateDetectorTimer);
+              this.connectStateDetectorTimer = null;
+            }
+            await this.disconnect();
+            log('Disconnected, starting flash');
+            if (config.board === "rpi_pico") {
+              await this.tool.flashPicoUF2();
+            } else {
+              this.sendstd(`${ansi.clear}Put chip into download mode: HOLD BOOT > PRESS EN > RELEASE BOOT...\n`);
+              await new Promise(r => setTimeout(r, 5000));
+              await this.tool.flashWithEsptool(config.board || "esp32");
+            }
+            log('Flash done, attempting reconnect');
+            // Wait for board to reboot then retry reconnect
+            this.sendstd(`${ansi.clear}Waiting for board to reboot...\n`);
+            for (let attempt = 0; attempt < 5; attempt++) {
+              await new Promise(r => setTimeout(r, 2000));
+              try {
+                await this.connect(this.peripheralParams, false);
+                this.isInDisconnect = false;
+                // Restart unplug detector after reconnect
+                if (this.peripheral && this.peripheral.isOpen) {
+                  this.connectStateDetectorTimer = setInterval(() => {
+                    if (this.peripheral && this.peripheral.isOpen === false) {
+                      clearInterval(this.connectStateDetectorTimer);
+                      this.disconnect();
+                      this.sendRemoteRequest("peripheralUnplug", null);
+                    }
+                  }, PERIPHERAL_UNPLUG_CHECK_INTERVAL);
+                }
+                log('Reconnected! Restarting detectors');
+                this.sendstd(`${ansi.green_dark}Reconnected!\n`);
+                this.sendRemoteRequest("uploadSuccess", null);
+                return;
+              } catch (e) {
+                log(`Reconnect attempt ${attempt + 1}/5 failed: ${e.message}`);
+                this.sendstd(`${ansi.yellow_dark}Retry ${attempt + 1}/5...\n`);
+              }
+            }
+            this.isInDisconnect = false;
+            log('All reconnect attempts failed');
+            // All retries failed — send peripheralUnplug so GUI knows
+            this.sendRemoteRequest("peripheralUnplug", null);
+            throw new Error("Failed to reconnect after flash");
+          }
+          // Upload-only: handled via REPL through existing connection (no disconnect)
+        } catch (err) {
+          this.sendRemoteRequest("uploadError", {
+            message: ansi.red + err.message,
+          });
+          if (!config.detectOnly) {
+            // Try to reconnect after failed flash instead of disconnecting
+            this.sendstd(`${ansi.clear}Flash failed, reconnecting...\n`);
+            for (let attempt = 0; attempt < 5; attempt++) {
+              await new Promise(r => setTimeout(r, 2000));
+              try {
+                await this.connect(this.peripheralParams, false);
+                this.sendstd(`${ansi.green_dark}Reconnected after flash failure.\n`);
+                this.isInDisconnect = false;
+                return;
+              } catch (e) {
+                this.sendstd(`${ansi.yellow_dark}Retry ${attempt + 1}/5...\n`);
+              }
+            }
+            this.sendRemoteRequest("peripheralUnplug", null);
+          }
         }
         break;
     }

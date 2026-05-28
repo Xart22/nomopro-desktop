@@ -112,7 +112,8 @@ const createWindow = () => {
   } else {
     if (token.token !== undefined) {
       setMenu();
-      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      //win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      win.loadURL("http://127.0.0.1:8601/");
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
@@ -216,7 +217,10 @@ app.on("ready", async () => {
       .catch((err) => logger.warn("Update dialog error: " + err.message));
   });
   autoUpdater.on("error", (err) => {
-    dialog.showErrorBox("Error: ", err == null ? "unknown" : (err.message || String(err)));
+    dialog.showErrorBox(
+      "Error: ",
+      err == null ? "unknown" : err.message || String(err),
+    );
   });
   autoUpdater.on("download-progress", (progressObj) => {
     if (win && win.webContents && !win.isDestroyed()) {
@@ -445,7 +449,14 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
   return await Promise.race([closePromise, timeoutPromise]).catch((err) => {
     // timeout rejection is expected; closePromise already resolved
     if (!timeoutTriggered) throw err;
-    return { exitCode: -1, signal: "SIGTERM", stdout, stderr: stderr + "\n[Execution timed out]", commands: [], timedOut: true };
+    return {
+      exitCode: -1,
+      signal: "SIGTERM",
+      stdout,
+      stderr: stderr + "\n[Execution timed out]",
+      commands: [],
+      timedOut: true,
+    };
   });
 });
 
@@ -484,6 +495,117 @@ ipcMain.handle("nomopro-python-stop", async () => {
 
 ipcMain.handle("get-python-candidates", async () => {
   return getPythonCandidates();
+});
+
+// ---- MicroPython Upload & Flash IPC ----
+const MicroPython = require("./src/link/src/upload/micropython");
+
+/**
+ * Resolve tools and userData paths from the link server if available.
+ */
+const _getMicroPythonConfig = () => {
+  const toolsPath = link
+    ? link.toolsPath
+    : path.join(__dirname, "src", "link", "tools");
+  const userDataPath = link ? link.userDataPath : app.getPath("userData");
+  return { toolsPath, userDataPath };
+};
+
+ipcMain.handle(
+  "micropython-flash",
+  async (event, { portPath, board, firmwareUrl, flashOffset }) => {
+    if (!portPath) throw new Error("portPath is required");
+
+    // Normalize Windows friendly name: "USB-SERIAL (COM6)" -> "COM6"
+    const normalizedPort = portPath.replace(/.*\((COM\d+)\).*/i, "$1");
+    console.log("[micropython-flash] raw port:", portPath, "normalized:", normalizedPort);
+
+    const { toolsPath, userDataPath } = _getMicroPythonConfig();
+
+    const config = { board: board || "esp32", firmwareUrl, flashOffset };
+
+    const mp = new MicroPython(
+      normalizedPort,
+      config,
+      userDataPath,
+      toolsPath,
+      (msg) => {
+        if (win && win.webContents) {
+          win.webContents.send("micropython-flash-progress", { text: msg });
+        }
+      },
+    );
+
+    if (board === "rpi_pico") {
+      const info = MicroPython.FIRMWARE ? MicroPython.FIRMWARE.rpi_pico : null;
+      if (info) mp._config.firmwareInfo = info;
+      await mp.flashPicoUF2();
+    } else {
+      await mp.flashEsp32();
+    }
+
+    return { success: true };
+  },
+);
+
+ipcMain.handle(
+  "micropython-upload",
+  async (event, { portPath, code, fileName, board, baudRate }) => {
+    if (!portPath || !code) throw new Error("portPath and code are required");
+    const { toolsPath, userDataPath } = _getMicroPythonConfig();
+
+    const config = {
+      board: board || "esp32",
+      fileName: fileName || "main.py",
+      baudRate: baudRate || 115200,
+    };
+
+    const mp = new MicroPython(
+      portPath,
+      config,
+      userDataPath,
+      toolsPath,
+      (msg) => {
+        if (win && win.webContents) {
+          win.webContents.send("micropython-progress", { text: msg });
+        }
+      },
+    );
+
+    const result = await mp.uploadCode(code);
+    return result;
+  },
+);
+
+ipcMain.handle("micropython-detect", async (event, { portPath, baudRate }) => {
+  if (!portPath) throw new Error("portPath is required");
+  const { toolsPath, userDataPath } = _getMicroPythonConfig();
+
+  const config = { baudRate: baudRate || 115200 };
+  const mp = new MicroPython(
+    portPath,
+    config,
+    userDataPath,
+    toolsPath,
+    (msg) => {
+      if (win && win.webContents) {
+        win.webContents.send("micropython-progress", { text: msg });
+      }
+    },
+  );
+
+  return await mp.detectFirmware(portPath, baudRate || 115200);
+});
+
+ipcMain.on("micropython-input", (event, { portPath, text }) => {
+  if (!portPath || !text) return;
+  const { SerialPort: SP } = require("serialport");
+  const port = new SP({ path: portPath, baudRate: 115200, autoOpen: false });
+  port.open((err) => {
+    if (err) return;
+    port.write(text + "\r\n", () => {});
+    port.drain(() => port.close());
+  });
 });
 
 // ---- Startup health check for bundled Python ----
