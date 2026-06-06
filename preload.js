@@ -92,7 +92,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   ipcRenderer.on("download-progress", downloadHandler);
 });
 
+const appDir = __dirname;
+
 contextBridge.exposeInMainWorld("electronAPI", {
+  // Method to get app path for local file loading
+  getAppPath: () => appDir,
   // Python candidates (virtualenv priority)
   getPythonCandidates: async () => {
     return await ipcRenderer.invoke("get-python-candidates");
@@ -269,9 +273,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // MicroPython flashing & upload API
   micropython: {
     flash: async (portPathOrParams) => {
-      const params = typeof portPathOrParams === 'string' ?
-        { portPath: portPathOrParams } :
-        (portPathOrParams || {});
+      const params =
+        typeof portPathOrParams === "string"
+          ? { portPath: portPathOrParams }
+          : portPathOrParams || {};
       return await ipcRenderer.invoke("micropython-flash", params);
     },
     upload: async (params) => {
@@ -326,4 +331,13 @@ contextBridge.exposeInMainWorld("nomoproDesktopPython", {
   writeStdin: async (data) => {
     return await ipcRenderer.invoke("nomopro-python-write-stdin", data);
   },
+});
+
+// Method to get app path for local file loading
+contextBridge.exposeInMainWorld("electronAPI", {
+  // ... existing methods ...
+  getAppPath: () => {
+    return __dirname;
+  },
+  // ... rest of existing methods ...
 });

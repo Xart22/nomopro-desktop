@@ -88,6 +88,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "src/nomokitjr",
+        "to": "nomokitjr",
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   },

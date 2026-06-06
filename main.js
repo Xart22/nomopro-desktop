@@ -95,6 +95,7 @@ const createWindow = () => {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: false,
       preload: path.join(__dirname, "preload.js"),
     },
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
@@ -112,8 +113,7 @@ const createWindow = () => {
   } else {
     if (token.token !== undefined) {
       setMenu();
-      //win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-      win.loadURL("http://127.0.0.1:8601/");
+      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
@@ -292,21 +292,26 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
     try {
-      const isAbsolute = path.isAbsolute(candidate);
-      const args = isAbsolute
-        ? ["-u", "-c", script]
-        : candidate === "py"
-          ? ["-3", "-u", "-c", script]
-          : ["-u", "-c", script];
+      // Validate candidate can actually execute (mirrors health check logic)
+      const validateArgs =
+        candidate === "py" ? ["-3", "--version"] : ["--version"];
+      const check = childProcess.spawnSync(candidate, validateArgs, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (check.status !== 0) {
+        logger.info(
+          `[Python] Skipping ${candidate} (spawnSync --version exit code ${check.status})`,
+        );
+        continue;
+      }
 
-      // Sanitized environment: only pass essential vars
+      // Use "-u" with script piped via stdin to avoid ENAMETOOLONG on Windows
+      const args = ["-u"];
+
+      // Use full inherited environment so CreateProcess succeeds
       const env = {
-        PATH: process.env.PATH || "",
-        HOME: process.env.HOME || process.env.USERPROFILE || "",
-        USERPROFILE: process.env.USERPROFILE || "",
-        SYSTEMROOT: process.env.SYSTEMROOT || "",
-        TMP: process.env.TMP || process.env.TEMP || "",
-        TEMP: process.env.TEMP || process.env.TMP || "",
+        ...process.env,
         PYTHONUNBUFFERED: "1",
       };
 
@@ -315,10 +320,22 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
         stdio: ["pipe", "pipe", "pipe"],
         env,
       });
+      if (!proc) {
+        logger.info(`[Python] spawn returned falsy for ${candidate}`);
+        continue;
+      }
+      proc.stdin.write(script);
+      proc.stdin.end();
+      proc.on("error", (e) => {
+        logger.info(
+          `[Python] spawn error event for ${candidate}: ${e.message}`,
+        );
+      });
       used = candidate;
       logger.info("[Python] Using: " + candidate);
       break;
     } catch (err) {
+      logger.info(`[Python] Candidate ${candidate} threw: ${err.message}`);
       proc = null;
     }
   }
@@ -518,7 +535,12 @@ ipcMain.handle(
 
     // Normalize Windows friendly name: "USB-SERIAL (COM6)" -> "COM6"
     const normalizedPort = portPath.replace(/.*\((COM\d+)\).*/i, "$1");
-    console.log("[micropython-flash] raw port:", portPath, "normalized:", normalizedPort);
+    console.log(
+      "[micropython-flash] raw port:",
+      portPath,
+      "normalized:",
+      normalizedPort,
+    );
 
     const { toolsPath, userDataPath } = _getMicroPythonConfig();
 
