@@ -1,6 +1,6 @@
 {
   "name": "nomokit-desktop",
-  "version": "2.1.3",
+  "version": "3.0.0",
   "main": "main.js",
   "scripts": {
     "test": "node test/run-tests.js && node test/e2e/e2e-test-matrix.js",
