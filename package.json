@@ -1,5 +1,5 @@
 {
-  "name": "nomopro-desktop",
+  "name": "nomokit-desktop",
   "version": "2.1.3",
   "main": "main.js",
   "scripts": {
@@ -21,7 +21,7 @@
     "deploy:mac": "npm run prebuild && electron-builder --mac -p always",
     "deploy:win": "npm run prebuild && electron-builder --win -p always"
   },
-  "description": "Nomopro Desktop App",
+  "description": "Nomokit Desktop App",
   "repository": "https://github.com/Xart22/nomopro-desktop",
   "publish": {
     "provider": "github",

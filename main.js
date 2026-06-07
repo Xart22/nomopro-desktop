@@ -99,21 +99,21 @@ const createWindow = () => {
       preload: path.join(__dirname, "preload.js"),
     },
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
-    title: "Nomopro-Desktop" + " - " + "v" + app.getVersion(),
+    title: "Nomokit-Desktop" + " - " + "v" + app.getVersion(),
   });
   if (!app.isPackaged) win.webContents.openDevTools();
   logger.info("socket.connected: " + socket.connected);
   // Load initial page based on current state
   if (socket.connected) {
     if (token.token !== undefined) {
-      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      win.loadURL("http://127.0.0.1:8601/");
+      //win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
   } else {
     if (token.token !== undefined) {
-      setMenu();
-      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      win.loadURL("http://127.0.0.1:8601/");
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
