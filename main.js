@@ -106,14 +106,13 @@ const createWindow = () => {
   // Load initial page based on current state
   if (socket.connected) {
     if (token.token !== undefined) {
-      win.loadURL("http://127.0.0.1:8601/");
-      //win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
   } else {
     if (token.token !== undefined) {
-      win.loadURL("http://127.0.0.1:8601/");
+      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
