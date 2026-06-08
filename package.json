@@ -71,11 +71,11 @@
       }
     },
     "nsis": {
-      "artifactName": "nomokit-Desktop-${version}.${ext}",
+      "artifactName": "Nomokit-Desktop-${version}.${ext}",
       "oneClick": true,
-      "uninstallDisplayName": "nomokit-Desktop-uninstaller",
+      "uninstallDisplayName": "Nomokit-Desktop-uninstaller",
       "installerIcon": "src/assets/img/nomokit.ico",
-      "shortcutName": "nomokit-Desktop",
+      "shortcutName": "Nomokit-Desktop",
       "runAfterFinish": true,
       "allowToChangeInstallationDirectory": false,
       "perMachine": false,
