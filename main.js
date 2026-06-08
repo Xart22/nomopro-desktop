@@ -90,8 +90,6 @@ const createWindow = () => {
     timeout: 10000,
   });
   win = new BrowserWindow({
-    width: 1620,
-    height: 900,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -101,11 +99,13 @@ const createWindow = () => {
     icon: path.join(__dirname, "/src/assets/img/nomokit.png"),
     title: "Nomokit-Desktop" + " - " + "v" + app.getVersion(),
   });
+  win.maximize();
   if (!app.isPackaged) win.webContents.openDevTools();
   logger.info("socket.connected: " + socket.connected);
   // Load initial page based on current state
   if (socket.connected) {
     if (token.token !== undefined) {
+      // win.loadURL("http://127.0.0.1:8601");
       win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
@@ -113,6 +113,7 @@ const createWindow = () => {
   } else {
     if (token.token !== undefined) {
       win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+      // win.loadURL("http://127.0.0.1:8601");
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }
