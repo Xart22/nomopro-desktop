@@ -28,8 +28,8 @@
     "releaseType": "release"
   },
   "build": {
-    "appId": "com.nomopro.desktop",
-    "productName": "Nomopro-Desktop",
+    "appId": "com.nomokit.desktop",
+    "productName": "nomokit-Desktop",
     "asar": false,
     "npmRebuild": false,
     "files": [
@@ -71,11 +71,11 @@
       }
     },
     "nsis": {
-      "artifactName": "Nomopro-Desktop-${version}.${ext}",
+      "artifactName": "nomokit-Desktop-${version}.${ext}",
       "oneClick": true,
-      "uninstallDisplayName": "Nomopro-Desktop-uninstaller",
+      "uninstallDisplayName": "nomokit-Desktop-uninstaller",
       "installerIcon": "src/assets/img/nomokit.ico",
-      "shortcutName": "Nomopro-Desktop",
+      "shortcutName": "nomokit-Desktop",
       "runAfterFinish": true,
       "allowToChangeInstallationDirectory": false,
       "perMachine": false,
@@ -143,7 +143,6 @@
     "electron": "^42.1.0",
     "electron-builder": "^24.9.1",
     "eslint": "^10.4.0",
-    "eslint-config-scratch": "^14.1.21",
     "jsdoc": "^4.0.5",
     "openblock-resource-cli": "^0.2.5",
     "progress": "^2.0.3",
