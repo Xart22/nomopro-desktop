@@ -9,7 +9,7 @@ on:
 jobs:
   build-windows:
     name: Build Windows
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -17,8 +17,6 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
-
-      - uses: microsoft/setup-msbuild@v2
 
       - name: Install dependencies
         run: npm ci
@@ -55,7 +53,7 @@ jobs:
         run: npm run test:smoke
 
       - name: Build
-        run: npm run build
+        run: npm run build -- --publish=never
         env:
           CSC_LINK: ""
           CSC_KEY_PASSWORD: ""
@@ -111,8 +109,8 @@ jobs:
       - name: Run tests
         run: npm run test:smoke
 
-      - name: Build (unsigned)
-        run: npm run build:mac
+      - name: Build (unsigned, no publish)
+        run: npm run build:mac -- --publish=never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
