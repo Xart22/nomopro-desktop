@@ -18,10 +18,9 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      - uses: microsoft/setup-msbuild@v2
+
       - name: Install dependencies
-        env:
-          GYP_MSVS_VERSION: "2022"
-          npm_config_msvs_version: "2022"
         run: npm ci
 
       - name: Install Python payload
@@ -53,7 +52,7 @@ jobs:
           "@ | Set-Content -Path src/link/tools/Arduino/arduino-cli.yaml
 
       - name: Run tests
-        run: npm test:smoke
+        run: npm run test:smoke
 
       - name: Build
         run: npm run build
@@ -110,7 +109,7 @@ jobs:
           EOF
 
       - name: Run tests
-        run: npm test:smoke
+        run: npm run test:smoke
 
       - name: Build (unsigned)
         run: npm run build:mac
