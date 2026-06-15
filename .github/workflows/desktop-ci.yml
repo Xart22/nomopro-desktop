@@ -12,20 +12,55 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: "18"
+          cache: "npm"
+
       - name: Install dependencies
         run: npm ci
-      - name: Prepare python payload (manual step)
-        run: echo "Place python payload under build-resources/python/win64 before build"
+
+      - name: Install Python payload
+        run: node scripts/install_python_payload.js --win
+
+      - name: Install Arduino CLI
+        run: choco install arduino-cli --no-progress
+
+      - name: Create Arduino CLI config
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src/link/tools/Arduino/arduino-data/staging
+          @"
+          daemon:
+            port: "50051"
+          directories:
+            data: .\arduino-data
+            downloads: .\arduino-data\staging
+            user: .\arduino-data
+          library:
+            enable_unsafe_install: false
+          logging:
+            file: ""
+            format: text
+            level: info
+          board_manager:
+            additional_urls:
+              - https://dl.espressif.com/dl/package_esp32_index.json
+          "@ | Set-Content -Path src/link/tools/Arduino/arduino-cli.yaml
+
+      - name: Run tests
+        run: npm test:smoke
+
       - name: Build
-        run: npm run build -- --win
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        run: npm run build
+        env:
+          CSC_LINK: ""
+          CSC_KEY_PASSWORD: ""
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: nomopro-desktop-windows
+          name: nomokit-desktop-windows
           path: dist/**
 
   build-macos:
@@ -33,18 +68,53 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: "18"
+          cache: "npm"
+
       - name: Install dependencies
         run: npm ci
-      - name: Prepare python payload (manual step)
-        run: echo "Place python payload under build-resources/python/mac before build"
-      - name: Build
-        run: npm run build -- --mac
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+
+      - name: Install Python payload
+        run: |
+          brew install zstd
+          node scripts/install_python_payload.js --mac
+
+      - name: Install Arduino CLI
+        run: brew install arduino-cli
+
+      - name: Create Arduino CLI config
+        run: |
+          mkdir -p src/link/tools/Arduino/arduino-data/staging
+          cat > src/link/tools/Arduino/arduino-cli.yaml << 'EOF'
+          daemon:
+            port: "50051"
+          directories:
+            data: ./arduino-data
+            downloads: ./arduino-data/staging
+            user: ./arduino-data
+          library:
+            enable_unsafe_install: false
+          logging:
+            file: ""
+            format: text
+            level: info
+          board_manager:
+            additional_urls:
+              - https://dl.espressif.com/dl/package_esp32_index.json
+          EOF
+
+      - name: Run tests
+        run: npm test:smoke
+
+      - name: Build (unsigned)
+        run: npm run build:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: nomopro-desktop-macos
+          name: nomokit-desktop-macos
           path: dist/**

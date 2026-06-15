@@ -40,11 +40,13 @@ const getDownloadUrl = () => {
       type: "zip",
     };
   } else if (PLATFORM === "darwin") {
-    // macOS: use official installer or portable
-    const archSuffix = ARCH === "arm64" ? "arm64" : "x86_64";
+    // macOS: use python-build-standalone (indygreg) portable builds
+    // Includes pip, full stdlib, and has correct bin/ layout
+    const macArch = ARCH === "arm64" ? "aarch64" : "x86_64";
+    const releaseTag = "20240713";
     return {
-      url: `https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-macos11.pkg`,
-      type: "pkg",
+      url: `https://github.com/indygreg/python-build-standalone/releases/download/${releaseTag}/cpython-${PYTHON_VERSION}+${releaseTag}-${macArch}-apple-darwin-pgo+lto-full.tar.zst`,
+      type: "tar-zst",
     };
   }
   throw new Error(`Unsupported platform: ${PLATFORM}`);
@@ -194,17 +196,45 @@ const main = async () => {
         console.warn("  Warning: pip installation may have failed.");
       }
     }
-  } else if (downloadInfo.type === "pkg") {
-    // For macOS pkg, we just note the user needs to extract manually
-    console.log(`
-  macOS .pkg downloaded to: ${downloadDest}
-  To extract Python.framework manually:
-    cd ${targetDir}
-    pkgutil --expand-full ${downloadDest} python-extracted
-  Then copy python binary to: ${targetDir}/bin/
-  
-  Alternatively, install a portable Python build instead.
-    `);
+  } else if (downloadInfo.type === "tar-zst") {
+    // macOS: extract python-build-standalone tar.zst
+    const zstdCheck = spawnSync("zstd", ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (zstdCheck.status !== 0) {
+      throw new Error(
+        "zstd CLI not available. Install with: brew install zstd",
+      );
+    }
+
+    console.log("  Extracting ...");
+    const extractResult = spawnSync("tar", [
+      "-I", "zstd",
+      "-xf", downloadDest,
+      "-C", targetDir,
+      "--strip-components", "1",
+    ], {
+      stdio: "inherit",
+      encoding: "utf8",
+    });
+    if (extractResult.status !== 0) {
+      throw new Error("Extraction failed");
+    }
+    console.log("  Extraction complete.");
+
+    // Ensure python3 is executable
+    const python3 = path.join(targetDir, "bin", "python3");
+    if (fs.existsSync(python3)) {
+      try {
+        fs.chmodSync(python3, 0o755);
+      } catch (e) {
+        console.warn(`  Warning: Could not chmod python3: ${e.message}`);
+      }
+    }
+
+    // pip is already included in python-build-standalone full builds
+    console.log("  pip is included in the build.");
   }
 
   // Write marker

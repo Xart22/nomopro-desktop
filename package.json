@@ -14,7 +14,7 @@
     "clean:tools": "rimraf \"src/link/tools/Arduino/staging\" \"src/link/tools/Arduino/tmp\"",
     "clean:native": "rimraf \"node_modules/@abandonware/noble/build\"",
     "prebuild": "npm run clean:tools && npm run prebuild:avr",
-    "prebuild:avr": "node -e \"var y=require('js-yaml'),fs=require('fs'),p=require('path'),cfg=y.load(fs.readFileSync('src/link/tools/Arduino/arduino-cli.yaml','utf8'));var dir=cfg.directories.data,avrDir=p.join(dir,'packages/arduino/hardware/avr');if(!fs.existsSync(avrDir)){require('child_process').execSync('arduino-cli core install arduino:avr --config-file arduino-cli.yaml',{cwd:'src/link/tools/Arduino',stdio:'inherit'})}\"",
+    "prebuild:avr": "node -e \"var fs=require('fs'),p=require('path'),cfgPath='src/link/tools/Arduino/arduino-cli.yaml';if(fs.existsSync(cfgPath)){var y=require('js-yaml'),cfg=y.load(fs.readFileSync(cfgPath,'utf8'));var dir=cfg.directories.data,avrDir=p.join(dir,'packages/arduino/hardware/avr');if(!fs.existsSync(avrDir)){require('child_process').execSync('arduino-cli core install arduino:avr --config-file arduino-cli.yaml',{cwd:'src/link/tools/Arduino',stdio:'inherit'})}}else{console.warn('prebuild:avr — arduino-cli.yaml not found, skipping AVR core install.')}\"",
     "build": "npm run prebuild && electron-builder --win",
     "build:mac": "npm run prebuild && electron-builder --mac",
     "deploy:all": "npm run prebuild && electron-builder --mac --win -p always",
