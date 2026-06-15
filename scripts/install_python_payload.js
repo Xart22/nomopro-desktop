@@ -209,11 +209,9 @@ const main = async () => {
     }
 
     console.log("  Extracting ...");
-    const extractResult = spawnSync("tar", [
-      "-I", "zstd",
-      "-xf", downloadDest,
-      "-C", targetDir,
-      "--strip-components", "1",
+    // macOS bsdtar doesn't support -I zstd; pipe through zstd instead
+    const extractResult = spawnSync("sh", ["-c",
+      `zstd -dc "${downloadDest}" | tar xf - -C "${targetDir}" --strip-components 1`
     ], {
       stdio: "inherit",
       encoding: "utf8",

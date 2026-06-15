@@ -19,6 +19,9 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        env:
+          GYP_MSVS_VERSION: "2022"
+          npm_config_msvs_version: "2022"
         run: npm ci
 
       - name: Install Python payload
