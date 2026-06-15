@@ -52,11 +52,8 @@ jobs:
       - name: Run tests
         run: npm run test:smoke
 
-      - name: Build
+      - name: Build (unsigned)
         run: npm run build -- --publish=never
-        env:
-          CSC_LINK: ""
-          CSC_KEY_PASSWORD: ""
 
       - uses: actions/upload-artifact@v4
         with:
