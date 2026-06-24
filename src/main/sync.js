@@ -5,70 +5,66 @@ const extract = require("extract-zip");
 const Downloader = require("nodejs-file-downloader");
 const logger = require("./logger");
 
-async function syncLibary(appRoot) {
-  logger.info("Syncing libary");
+async function syncLibrary(appRoot) {
+  logger.info("Syncing library");
   try {
     const localDir = path.join(appRoot, "src/link/tools/Arduino/local");
-    if (!fs.existsSync(localDir)) {
-      fs.mkdirSync(localDir);
+    const librariesDir = path.join(appRoot, "src/link/tools/Arduino/libraries");
+    const versionPath = path.join(appRoot, "src/link/tools/version.json");
+
+    const versionFile = JSON.parse(fs.readFileSync(versionPath, "utf8"));
+    const { data } = await axios.get("https://nomo-kit.com/api/check-update");
+    if (data.version === versionFile.version) return;
+
+    fs.mkdirSync(localDir, { recursive: true });
+
+    // Download to isolated temp dir
+    const tempDir = path.join(appRoot, "src/link/tools/temp");
+    fs.mkdirSync(tempDir, { recursive: true });
+
+    const downloader = new Downloader({ url: data.url, directory: tempDir });
+    console.log("Downloading libraries from: " + data.url);
+    const { filePath, downloadStatus } = await downloader.download();
+    console.log("Download status: " + downloadStatus);
+    if (downloadStatus !== "COMPLETE") return;
+
+    // Stage extraction away from librariesDir
+    const stageDir = path.join(tempDir, "stage");
+    fs.mkdirSync(stageDir, { recursive: true });
+    await extract(filePath, { dir: stageDir });
+
+    // Extract inner zips, skip version marker
+    const versionZip = data.version + ".zip";
+    for (const name of fs.readdirSync(stageDir)) {
+      if (!name.endsWith(".zip")) continue;
+      const p = path.join(stageDir, name);
+      await extract(p, { dir: stageDir });
+      fs.unlinkSync(p);
     }
-    const versionFile = JSON.parse(
-      fs.readFileSync(
-        path.join(appRoot, "src/link/tools/version.json"),
-        "utf8",
-      ),
-    );
-    const response = await axios.get("https://nomo-kit.com/api/check-update");
-    const data = response.data;
-    if (data.version !== versionFile.version) {
-      // Download first, then delete only on success
-      const librariesDir = path.join(appRoot, "src/link/tools/Arduino/libraries");
-      const downloader = new Downloader({
-        url: data.url,
-        directory: librariesDir,
-      });
 
-      const { filePath, downloadStatus } = await downloader.download();
-      if (downloadStatus === "COMPLETE") {
-        // Delete old libraries after successful download
-        if (fs.existsSync(librariesDir)) {
-          fs.rmSync(librariesDir, { recursive: true, force: true });
-        }
-        fs.mkdirSync(librariesDir, { recursive: true });
-        await extract(filePath, { dir: librariesDir });
+    // Swap staging into place
+    if (fs.existsSync(librariesDir)) {
+      fs.rmSync(librariesDir, { recursive: true, force: true });
+    }
+    fs.renameSync(stageDir, librariesDir);
 
-        // Extract inner archives sequentially
-        const files = fs.readdirSync(librariesDir);
-        for (const file of files) {
-          if (file !== data.version + ".zip") {
-            await extract(path.join(librariesDir, file), { dir: librariesDir });
-            fs.unlinkSync(path.join(librariesDir, file));
-          } else {
-            fs.unlinkSync(path.join(librariesDir, file));
-          }
-        }
-
-        // Copy local files
-        if (fs.existsSync(localDir)) {
-          const localFiles = fs.readdirSync(localDir);
-          for (const file of localFiles) {
-            fs.cpSync(
-              path.join(localDir, file),
-              path.join(librariesDir, file),
-              { recursive: true },
-            );
-          }
-        }
-
-        // Write version only after everything is done
-        fs.writeFileSync(
-          path.join(appRoot, "src/link/tools/version.json"),
-          JSON.stringify(data),
-        );
+    // Merge local overrides
+    if (fs.existsSync(localDir)) {
+      for (const file of fs.readdirSync(localDir)) {
+        fs.cpSync(path.join(localDir, file), path.join(librariesDir, file), { recursive: true });
       }
     }
+
+    // Cleanup temp
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+    } catch (e) {
+      logger.warn("temp cleanup failed: " + e.message);
+    }
+
+    fs.writeFileSync(versionPath, JSON.stringify(data));
   } catch (error) {
-    logger.error("syncLibary error: " + error.message);
+    logger.error("syncLibrary error: " + error.message);
   }
 }
 
@@ -156,4 +152,4 @@ function syncLink(win, appRoot, windowUpdate) {
   });
 }
 
-module.exports = { syncLibary, syncGui, syncLink };
+module.exports = { syncLibrary, syncGui, syncLink };

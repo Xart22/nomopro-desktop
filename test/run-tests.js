@@ -20,7 +20,7 @@ try {
   require("assert").equal(typeof logger.info, "function");
   require("assert").equal(typeof logger.warn, "function");
   require("assert").equal(typeof logger.error, "function");
-  require("assert").equal(typeof sync.syncLibary, "function");
+  require("assert").equal(typeof sync.syncLibrary, "function");
   require("assert").equal(typeof sync.syncGui, "function");
   require("assert").equal(typeof sync.syncLink, "function");
 

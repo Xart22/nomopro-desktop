@@ -1,6 +1,6 @@
 {
   "name": "nomokit-desktop",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "main": "main.js",
   "scripts": {
     "test": "node test/run-tests.js && node test/e2e/e2e-test-matrix.js",
@@ -40,7 +40,8 @@
       "!src/link/tools/Arduino/packages",
       "!src/gui/**/*.map",
       "!test",
-      "data/*.json*"
+      "data/*.json*",
+      "!readme.md"
     ],
     "win": {
       "publish": [

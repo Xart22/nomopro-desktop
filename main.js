@@ -73,14 +73,19 @@ let link;
 const appRoot = __dirname;
 // delegate sync logic to helper module (keeps main.js small)
 const {
-  syncLibary: _syncLibary,
+  syncLibrary: _syncLibrary,
   syncGui: _syncGui,
   syncLink: _syncLink,
 } = require("./src/main/sync");
 const { setMenu: _setMenu } = require("./src/main/menu");
-
+let registerNlpHandlers = () => {};
+try {
+  registerNlpHandlers = require("./src/main/nlp").registerNlpHandlers;
+} catch (e) {
+  console.warn("[main] NLP require failed:", e.message);
+}
 // lightweight wrappers so existing call sites keep working
-const syncLibary = async () => _syncLibary(appRoot);
+const syncLibrary = async () => _syncLibrary(appRoot);
 
 app.commandLine.appendSwitch("ignore-certificate-errors");
 const createWindow = () => {
@@ -105,7 +110,7 @@ const createWindow = () => {
   // Load initial page based on current state
   if (socket.connected) {
     if (token.token !== undefined) {
-      // win.loadURL("http://127.0.0.1:8601");
+      //win.loadURL("http://127.0.0.1:8601");
       win.loadFile(path.join(__dirname, "/src/gui/index.html"));
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
@@ -153,7 +158,7 @@ app.whenReady().then(async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
-  await syncLibary();
+  await syncLibrary();
   await syncGui();
   await syncLink();
 });
@@ -306,8 +311,20 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
         continue;
       }
 
-      // Use "-u" with script piped via stdin to avoid ENAMETOOLONG on Windows
-      const args = ["-u"];
+      // Write script to temp file so stdin stays open for RPC responses
+      // (_extension_rpc, _device_rpc)
+      const tmpFile = path.join(
+        require("os").tmpdir(),
+        "nomopro_" +
+          Date.now() +
+          "_" +
+          Math.random().toString(36).slice(2) +
+          ".py",
+      );
+      try {
+        fs.writeFileSync(tmpFile, script, "utf-8");
+      } catch (_) {}
+      const args = ["-u", tmpFile];
 
       // Use full inherited environment so CreateProcess succeeds
       const env = {
@@ -322,10 +339,17 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
       });
       if (!proc) {
         logger.info(`[Python] spawn returned falsy for ${candidate}`);
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch (_) {}
         continue;
       }
-      proc.stdin.write(script);
-      proc.stdin.end();
+      // Clean up temp file after process exits
+      proc.on("exit", () => {
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch (_) {}
+      });
       proc.on("error", (e) => {
         logger.info(
           `[Python] spawn error event for ${candidate}: ${e.message}`,
@@ -629,6 +653,13 @@ ipcMain.on("micropython-input", (event, { portPath, text }) => {
     port.drain(() => port.close());
   });
 });
+
+// ---- NLP IPC handlers ----
+try {
+  registerNlpHandlers();
+} catch (e) {
+  console.error("[main] NLP register failed:", e.message);
+}
 
 // ---- Startup health check for bundled Python ----
 app.whenReady().then(async () => {

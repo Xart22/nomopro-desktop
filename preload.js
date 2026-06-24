@@ -270,6 +270,60 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return await ipcRenderer.invoke("recovery-verify-shortcuts");
     },
   },
+  // NLP API (desktop-only extension)
+  nlp: {
+    sentiment: async (text) => {
+      return await ipcRenderer.invoke("nlp:sentiment", text);
+    },
+    entities: async (text) => {
+      return await ipcRenderer.invoke("nlp:entities", text);
+    },
+    classify: async (text) => {
+      return await ipcRenderer.invoke("nlp:classify", text);
+    },
+    // Sync classify — returns {label: string, confidence: number}
+    classifySync: (text) => {
+      return ipcRenderer.sendSync("nlp:classify-sync", text);
+    },
+    // Async classify result — returns {label: string, confidence: number}
+    classifyResult: async (text) => {
+      return await ipcRenderer.invoke("nlp:classify-result", text);
+    },
+    // Sentiment score — returns float -1.0 to 1.0
+    sentimentScore: async (text) => {
+      return await ipcRenderer.invoke("nlp:sentiment-score", text);
+    },
+    train: async (label, examples) => {
+      return await ipcRenderer.invoke("nlp:train", label, examples);
+    },
+    similarity: async (text1, text2) => {
+      return await ipcRenderer.invoke("nlp:similarity", text1, text2);
+    },
+    exportTraining: async () => {
+      return await ipcRenderer.invoke("nlp:export-training");
+    },
+    importTraining: async () => {
+      return await ipcRenderer.invoke("nlp:import-training");
+    },
+    resetAll: async () => {
+      return await ipcRenderer.invoke("nlp:reset-all");
+    },
+    removeIntent: async (label) => {
+      return await ipcRenderer.invoke("nlp:remove-intent", label);
+    },
+    getIntents: async () => {
+      return await ipcRenderer.invoke("nlp:get-intents");
+    },
+    uploadCsv: async () => {
+      return await ipcRenderer.invoke("nlp:upload-csv");
+    },
+    downloadCsv: async (data) => {
+      return await ipcRenderer.invoke("nlp:download-csv", data);
+    },
+    downloadCsvTemplate: async () => {
+      return await ipcRenderer.invoke("nlp:download-csv-template");
+    },
+  },
   // MicroPython flashing & upload API
   micropython: {
     flash: async (portPathOrParams) => {

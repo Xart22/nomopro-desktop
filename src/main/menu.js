@@ -222,12 +222,12 @@ function setMenu({ win, appRoot, app }) {
         {
           label: "Check Update",
           click: async () => {
-            const { syncGui, syncLink, syncLibary } = require(
+            const { syncGui, syncLink, syncLibrary } = require(
               path.join(appRoot, "src/main/sync"),
             );
             await syncGui(win, appRoot);
             await syncLink(win, appRoot);
-            await syncLibary(appRoot);
+            await syncLibrary(appRoot);
           },
         },
         { label: "Version GUI: " + version.gui, enabled: false },
