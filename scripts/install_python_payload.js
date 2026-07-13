@@ -52,6 +52,33 @@ const getDownloadUrl = () => {
   throw new Error(`Unsupported platform: ${PLATFORM}`);
 };
 
+// Phase-1 training-engine dependencies (scikit-learn training + ONNX export),
+// installed into the bundled Python env so the nomokit-ml persistent training
+// session has them available without a per-user pip install at runtime.
+const PIP_DEPS = ["scikit-learn", "numpy", "onnx", "skl2onnx", "onnxruntime"];
+
+const installPipDeps = (pythonExe, cwd) => {
+  console.log(
+    `  Installing training-engine dependencies: ${PIP_DEPS.join(", ")}`,
+  );
+  const result = spawnSync(
+    pythonExe,
+    ["-m", "pip", "install", "--no-warn-script-location", ...PIP_DEPS],
+    {
+      stdio: "inherit",
+      encoding: "utf8",
+      cwd,
+    },
+  );
+  if (result.status === 0) {
+    console.log("  Training-engine dependencies installed successfully.");
+  } else {
+    console.warn(
+      `  Warning: training-engine dependency installation may have failed (exit ${result.status}).`,
+    );
+  }
+};
+
 const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -192,6 +219,7 @@ const main = async () => {
       });
       if (result.status === 0) {
         console.log("  pip installed successfully.");
+        installPipDeps(pythonExe, targetDir);
       } else {
         console.warn("  Warning: pip installation may have failed.");
       }
@@ -233,6 +261,9 @@ const main = async () => {
 
     // pip is already included in python-build-standalone full builds
     console.log("  pip is included in the build.");
+    if (fs.existsSync(python3)) {
+      installPipDeps(python3, targetDir);
+    }
   }
 
   // Write marker

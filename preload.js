@@ -385,6 +385,112 @@ contextBridge.exposeInMainWorld("nomoproDesktopPython", {
   writeStdin: async (data) => {
     return await ipcRenderer.invoke("nomopro-python-write-stdin", data);
   },
+  // Persistent-session wrapper (added for the nomokit-ml relay -- see
+  // nomopro/openblock-gui's src/lib/nomokit-ml-relay.js for the consumer).
+  //
+  // The existing nomopro-python-run/-write-stdin/-stop IPC above tracks a single
+  // global process (`currentPythonProc` in main.js) and has no notion of a run
+  // id, so calling it again mid-run kills whatever was running. That's fine for
+  // the one-shot "run this code" flow those methods serve, but a persistent
+  // training session needs its own isolated process that a version check (or
+  // another persistent session) can't accidentally kill or write into.
+  //
+  // Rather than retrofit an id param onto the existing single-slot IPC (which
+  // would risk changing behavior for the current GUI bundle -- confirmed by
+  // grepping src/gui/lib.min.js, which listens on the raw
+  // "nomopro-python-stdout"/"-stderr" channels expecting a plain string line),
+  // this adds a parallel, additive set of IPC channels
+  // (nomopro-python-start-persistent/-persistent-write-stdin/-persistent-stop)
+  // keyed by a renderer-generated session id, backed by a Map in main.js. Each
+  // session gets its own child process, so multiple concurrent startPersistent()
+  // calls (or a startPersistent() running alongside a getVersion() check or a
+  // legacy runPythonCode() call) never cross-talk.
+  startPersistent: (source, handlers = {}) => {
+    const onStdout = handlers && handlers.onStdout;
+    const onStderr = handlers && handlers.onStderr;
+    const onExit = handlers && handlers.onExit;
+
+    const sessionId =
+      "nkml_" +
+      Date.now().toString(36) +
+      "_" +
+      Math.random().toString(36).slice(2, 10);
+
+    const stdoutHandler = (event, payload) => {
+      if (
+        payload &&
+        payload.sessionId === sessionId &&
+        typeof onStdout === "function"
+      ) {
+        onStdout(payload.line);
+      }
+    };
+    const stderrHandler = (event, payload) => {
+      if (
+        payload &&
+        payload.sessionId === sessionId &&
+        typeof onStderr === "function"
+      ) {
+        onStderr(payload.line);
+      }
+    };
+    const cleanupListeners = () => {
+      ipcRenderer.removeListener(
+        "nomopro-python-persistent-stdout",
+        stdoutHandler,
+      );
+      ipcRenderer.removeListener(
+        "nomopro-python-persistent-stderr",
+        stderrHandler,
+      );
+      ipcRenderer.removeListener(
+        "nomopro-python-persistent-exit",
+        exitHandler,
+      );
+    };
+    const exitHandler = (event, payload) => {
+      if (!payload || payload.sessionId !== sessionId) return;
+      cleanupListeners();
+      if (typeof onExit === "function") onExit(payload.exitCode);
+    };
+
+    ipcRenderer.on("nomopro-python-persistent-stdout", stdoutHandler);
+    ipcRenderer.on("nomopro-python-persistent-stderr", stderrHandler);
+    ipcRenderer.on("nomopro-python-persistent-exit", exitHandler);
+
+    // Fire-and-forget: the caller (see nomokit-ml-relay.js) expects
+    // startPersistent() to return the {writeStdin, stop} handle synchronously,
+    // then immediately calls run.writeStdin(...) without waiting for this to
+    // resolve. main.js queues any stdin that arrives before the process is
+    // actually spawned, so this race is handled on that side.
+    ipcRenderer
+      .invoke("nomopro-python-start-persistent", { sessionId, code: source })
+      .catch((err) => {
+        cleanupListeners();
+        if (typeof onExit === "function") onExit(-1);
+        console.warn(
+          "[nomoproDesktopPython] startPersistent failed:",
+          err && err.message ? err.message : err,
+        );
+      });
+
+    return {
+      writeStdin: async (data) => {
+        return await ipcRenderer.invoke(
+          "nomopro-python-persistent-write-stdin",
+          { sessionId, data },
+        );
+      },
+      stop: async () => {
+        return await ipcRenderer.invoke("nomopro-python-persistent-stop", {
+          sessionId,
+        });
+      },
+    };
+  },
+  getVersion: async () => {
+    return await ipcRenderer.invoke("nomopro-python-version");
+  },
 });
 
 // Method to get app path for local file loading
