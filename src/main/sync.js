@@ -119,6 +119,21 @@ async function _syncResource(win, appRoot, windowUpdate, { logLabel, versionFiel
               logger.warn("Failed to clean up update zip: " + e.message);
             }
             const { app } = require("electron");
+            // app.exit() bypasses the "before-quit" event, so it won't run
+            // main.js's persistent-Python-session cleanup sweep -- sweep
+            // explicitly here first to avoid orphaning a running training
+            // session across this relaunch.
+            try {
+              require(path.join(
+                appRoot,
+                "main.js",
+              )).killAllPersistentPythonSessions();
+            } catch (e) {
+              logger.warn(
+                "Failed to sweep persistent python sessions before relaunch: " +
+                  e.message,
+              );
+            }
             app.relaunch();
             app.exit();
           }

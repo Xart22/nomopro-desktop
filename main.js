@@ -245,10 +245,6 @@ app.on("window-all-closed", () => {
 
 const setMenu = () => _setMenu({ win, appRoot, app });
 
-app.on("before-quit", () => {
-  // cleanup handled by window-all-closed
-});
-
 // ipc handlers and socket listeners are registered by modules in createWindow
 
 // ---- Hardened Python runner IPC for renderer bridge ----
@@ -553,11 +549,52 @@ ipcMain.handle("get-python-candidates", async () => {
 // this is an additive, parallel subsystem keyed by a renderer-generated
 // sessionId, so concurrent sessions (or a session running alongside the
 // legacy run IPC) can never cross-talk.
-const persistentPythonSessions = new Map(); // sessionId -> { proc, pendingStdin }
+const persistentPythonSessions = new Map(); // sessionId -> { proc, pendingStdin, timeout }
+
+// Backstop timeout for persistent sessions -- guards against a session being
+// orphaned (renderer navigates away, e.g. a Socket.IO disconnect swapping
+// win.loadFile() to a different page, without calling stop()) and never
+// getting cleaned up. Deliberately much longer than PYTHON_EXECUTION_TIMEOUT_MS
+// (30s) above: unlike the one-shot run flow, a persistent session backs a real
+// training job that can legitimately run for a long time, so this is a bound
+// on worst-case leakage, not a tight execution budget -- killing an
+// in-progress training run early would be worse than a slow leak.
+const PERSISTENT_PYTHON_SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 
 const cleanupPersistentSession = (sessionId) => {
+  const session = persistentPythonSessions.get(sessionId);
+  if (session && session.timeout) {
+    clearTimeout(session.timeout);
+  }
   persistentPythonSessions.delete(sessionId);
 };
+
+// Kills every tracked persistent-session child process and clears the map.
+// Called on app quit (see app.on("before-quit") below) and also invoked
+// explicitly from the two relaunch flows that bypass "before-quit" via
+// app.exit() -- see src/main/sync.js (_syncResource) and src/main/socket.js
+// (login-fail handler), both of which call this via
+// require(path.join(appRoot, "main.js")).killAllPersistentPythonSessions()
+// right before app.exit().
+const killAllPersistentPythonSessions = () => {
+  for (const [sessionId, session] of persistentPythonSessions) {
+    if (session.timeout) {
+      clearTimeout(session.timeout);
+    }
+    if (session.proc && !session.proc.killed) {
+      try {
+        session.proc.kill("SIGKILL");
+      } catch (e) {
+        logger.warn(
+          `Failed to kill persistent python session ${sessionId} during cleanup sweep`,
+        );
+      }
+    }
+  }
+  persistentPythonSessions.clear();
+};
+
+app.on("before-quit", killAllPersistentPythonSessions);
 
 ipcMain.handle(
   "nomopro-python-start-persistent",
@@ -654,6 +691,22 @@ ipcMain.handle(
 
     const session = { proc, pendingStdin: [] };
     persistentPythonSessions.set(sessionId, session);
+
+    // Backstop timeout -- see PERSISTENT_PYTHON_SESSION_TIMEOUT_MS above.
+    session.timeout = setTimeout(() => {
+      logger.warn(
+        `[Python:persistent:${sessionId}] exceeded ${PERSISTENT_PYTHON_SESSION_TIMEOUT_MS}ms backstop timeout; killing orphaned session`,
+      );
+      if (session.proc && !session.proc.killed) {
+        try {
+          session.proc.kill("SIGKILL");
+        } catch (e) {
+          logger.warn(
+            `Failed to kill timed-out persistent python session ${sessionId}`,
+          );
+        }
+      }
+    }, PERSISTENT_PYTHON_SESSION_TIMEOUT_MS);
 
     let stdoutBuffer = "";
     proc.stdout.on("data", (chunk) => {
@@ -954,3 +1007,12 @@ app.whenReady().then(async () => {
     }
   }, 3000); // Run 3s after startup
 });
+
+// Exported so the relaunch flows in src/main/sync.js and src/main/socket.js
+// (both of which call app.exit(), which bypasses "before-quit") can sweep
+// persistent Python sessions before the process is torn down. Node caches
+// this module after Electron's initial require of it as the app entry point,
+// so a later `require(path.join(appRoot, "main.js"))` from those modules
+// returns this same, fully-initialized exports object rather than
+// re-executing main.js.
+module.exports = { killAllPersistentPythonSessions };

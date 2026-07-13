@@ -54,6 +54,21 @@ function initSocket({ socket, appRoot, win }) {
           "Error: ",
           "Seseorang telah login dengan akun anda, silahkan login kembali",
         );
+        // app.exit() bypasses the "before-quit" event, so it won't run
+        // main.js's persistent-Python-session cleanup sweep -- sweep
+        // explicitly here first to avoid orphaning a running training
+        // session across this forced relaunch.
+        try {
+          require(path.join(
+            appRoot,
+            "main.js",
+          )).killAllPersistentPythonSessions();
+        } catch (e) {
+          logger.warn(
+            "Failed to sweep persistent python sessions before relaunch: " +
+              e.message,
+          );
+        }
         app.relaunch();
         app.exit();
       }
