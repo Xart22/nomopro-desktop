@@ -198,6 +198,33 @@ if (fs.existsSync(MOCHA)) {
   console.log("  ⚠ mocha not found, skipping pip manager tests");
 }
 
+// 4b. Unit tests: Python stdin guard (EPIPE crash regression)
+console.log("\n--- Python stdin guard unit tests ---");
+if (fs.existsSync(MOCHA)) {
+  const stdinResult = spawnSync(
+    process.execPath,
+    [MOCHA, path.join(__dirname, "unit", "python-stdin.test.js")],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: ROOT,
+    },
+  );
+  if (stdinResult.status === 0) {
+    console.log(stdinResult.stdout
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => "  " + l)
+      .join("\n"));
+  } else {
+    console.error(stdinResult.stdout);
+    console.error(stdinResult.stderr);
+    exitCode = 1;
+  }
+} else {
+  console.log("  ⚠ mocha not found, skipping Python stdin guard tests");
+}
+
 // 5. Source contract validation for pip
 console.log("\n--- Pip source contract validation ---");
 try {

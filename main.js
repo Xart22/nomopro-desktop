@@ -2,6 +2,29 @@ const { app, BrowserWindow, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const logger = require("./src/main/logger");
+const {
+  guardChildStdin,
+  safeWriteStdin,
+} = require("./src/main/python-stdin");
+
+// Backstop: writing to any child process's stdin after its read end closed
+// raises an async EPIPE on the stream. The per-spawn guards above cover the
+// Python paths; this catches the same pipe-class error from any other child
+// (micropython flashing, nlp, link) so a broken pipe can never take the whole
+// app down. Genuine bugs are re-thrown with default crash visibility.
+process.on("uncaughtException", (err) => {
+  const code = err && err.code;
+  if (
+    code === "EPIPE" ||
+    code === "ERR_STREAM_DESTROYED" ||
+    code === "ERR_STREAM_WRITE_AFTER_END"
+  ) {
+    logger.warn(`Ignored stray pipe write error (${code})`);
+    return;
+  }
+  logger.error(`Uncaught exception: ${(err && err.stack) || err}`);
+  throw err;
+});
 const { io } = require("socket.io-client");
 const { autoUpdater } = require("electron-updater");
 
@@ -351,6 +374,7 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
           `[Python] spawn error event for ${candidate}: ${e.message}`,
         );
       });
+      guardChildStdin(proc, "[Python]", logger);
       used = candidate;
       logger.info("[Python] Using: " + candidate);
       break;
@@ -498,12 +522,7 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
 });
 
 ipcMain.handle("nomopro-python-write-stdin", async (event, data) => {
-  if (
-    currentPythonProc &&
-    currentPythonProc.stdin &&
-    currentPythonProc.stdin.writable
-  ) {
-    currentPythonProc.stdin.write(String(data) + "\n");
+  if (safeWriteStdin(currentPythonProc, String(data) + "\n")) {
     return { written: true };
   }
   return { written: false, reason: "no-process-or-stdin" };
@@ -744,6 +763,8 @@ ipcMain.handle(
       );
     });
 
+    guardChildStdin(proc, `[Python:persistent:${sessionId}]`, logger);
+
     proc.on("close", (exitCode, signal) => {
       // Flush remaining buffers
       if (stdoutBuffer && win && win.webContents) {
@@ -770,17 +791,9 @@ ipcMain.handle(
 
     // Flush any stdin writes that arrived (and were queued) before the
     // process finished spawning.
-    if (
-      session.pendingStdin.length &&
-      proc.stdin &&
-      proc.stdin.writable
-    ) {
+    if (session.pendingStdin.length) {
       session.pendingStdin.forEach((data) => {
-        try {
-          proc.stdin.write(data);
-        } catch (e) {
-          // ignore
-        }
+        safeWriteStdin(proc, data);
       });
       session.pendingStdin = [];
     }
@@ -796,8 +809,7 @@ ipcMain.handle(
     if (!session) {
       return { written: false, reason: "no-session" };
     }
-    if (session.proc && session.proc.stdin && session.proc.stdin.writable) {
-      session.proc.stdin.write(String(data));
+    if (safeWriteStdin(session.proc, String(data))) {
       return { written: true };
     }
     // Process hasn't finished spawning yet -- queue it, it'll be flushed
