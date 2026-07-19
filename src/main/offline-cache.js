@@ -11,6 +11,7 @@
 const { spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const logger = require("./logger");
 const { ipcMain } = require("electron");
 
@@ -21,7 +22,10 @@ const patternForPackage = (name) => escapeRegex(name).replace(/[-_]/g, "[-_]");
  * Get the offline wheel cache directory
  */
 const getCacheDir = (appRoot) => {
-  const pv = process.versions && process.versions.python ? process.versions.python.replace(/\./g, "") : "unknown";
+  const pv =
+    process.versions && process.versions.python
+      ? process.versions.python.replace(/\./g, "")
+      : "unknown";
   const platform = process.platform;
   return path.join(appRoot, "data", "wheel-cache", `${platform}-py${pv}`);
 };
@@ -62,15 +66,24 @@ const getCacheInfo = async (event, { appRoot }) => {
     const packages = [];
 
     for (const entry of entries) {
-      if (entry.isFile() && (entry.name.endsWith(".whl") || entry.name.endsWith(".tar.gz") || entry.name.endsWith(".zip"))) {
+      if (
+        entry.isFile() &&
+        (entry.name.endsWith(".whl") ||
+          entry.name.endsWith(".tar.gz") ||
+          entry.name.endsWith(".zip"))
+      ) {
         const fullPath = path.join(cacheDir, entry.name);
         const stat = fs.statSync(fullPath);
         totalSize += stat.size;
 
         // Parse package name from filename
         // e.g. requests-2.31.0-py3-none-any.whl
-        const nameMatch = entry.name.match(/^([a-zA-Z0-9_.-]+?)-(\d+\.\d+(?:\.\d+)?)/);
-        const pkgName = nameMatch ? nameMatch[1].replace(/_/g, "-") : entry.name;
+        const nameMatch = entry.name.match(
+          /^([a-zA-Z0-9_.-]+?)-(\d+\.\d+(?:\.\d+)?)/,
+        );
+        const pkgName = nameMatch
+          ? nameMatch[1].replace(/_/g, "-")
+          : entry.name;
         const pkgVersion = nameMatch ? nameMatch[2] : "unknown";
 
         packages.push({
@@ -78,16 +91,18 @@ const getCacheInfo = async (event, { appRoot }) => {
           packageName: pkgName,
           version: pkgVersion,
           size: stat.size,
-          sizeMB: Math.round(stat.size / 1024 / 1024 * 100) / 100,
+          sizeMB: Math.round((stat.size / 1024 / 1024) * 100) / 100,
           modifiedAt: stat.mtime.toISOString(),
         });
       }
     }
 
     info.totalSize = totalSize;
-    info.totalSizeMB = Math.round(totalSize / 1024 / 1024 * 100) / 100;
+    info.totalSizeMB = Math.round((totalSize / 1024 / 1024) * 100) / 100;
     info.packageCount = packages.length;
-    info.packages = packages.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+    info.packages = packages.sort((a, b) =>
+      b.modifiedAt.localeCompare(a.modifiedAt),
+    );
   } catch (e) {
     return { success: false, error: e.message, ...info };
   }
@@ -99,18 +114,37 @@ const getCacheInfo = async (event, { appRoot }) => {
  * Copy a package's wheel to the offline cache when install succeeds
  * This is called by pip-manager after successful install
  */
+const getPipCacheDir = () => {
+  // Common pip cache locations per platform
+  const isWin = process.platform === "win32";
+  if (isWin) {
+    const localAppData = process.env.LOCALAPPDATA || "";
+    if (localAppData) return path.join(localAppData, "pip", "cache");
+    return path.join(os.homedir(), "AppData", "Local", "pip", "cache");
+  }
+  // macOS / Linux
+  const xdg = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+  return path.join(xdg, "pip");
+};
+
 const cachePackage = async (appRoot, packageName, pipCacheDir) => {
   const cacheDir = ensureCacheDir(appRoot);
 
+  // Resolve pip cache dir: use provided, or compute default
+  const cacheDirToScan = pipCacheDir || getPipCacheDir();
+
   // Find recently downloaded wheels in pip's cache
   try {
-    if (pipCacheDir && fs.existsSync(pipCacheDir)) {
+    if (cacheDirToScan && fs.existsSync(cacheDirToScan)) {
       const wheels = [];
       const walkDir = (dir) => {
         const entries = fs.readdirSync(dir, { withFileTypes: true });
         for (const entry of entries) {
           const full = path.join(dir, entry.name);
-          if (entry.isFile() && (entry.name.endsWith(".whl") || entry.name.endsWith(".tar.gz"))) {
+          if (
+            entry.isFile() &&
+            (entry.name.endsWith(".whl") || entry.name.endsWith(".tar.gz"))
+          ) {
             // Check if wheel matches the package
             const namePart = patternForPackage(packageName.toLowerCase());
             if (entry.name.toLowerCase().match(new RegExp(namePart))) {
@@ -121,10 +155,11 @@ const cachePackage = async (appRoot, packageName, pipCacheDir) => {
           }
         }
       };
-      walkDir(pipCacheDir);
+      walkDir(cacheDirToScan);
 
       // Copy matching wheels to our cache
-      for (const wheel of wheels.slice(-3)) { // Max 3 per package
+      for (const wheel of wheels.slice(-3)) {
+        // Max 3 per package
         const dest = path.join(cacheDir, path.basename(wheel));
         if (!fs.existsSync(dest)) {
           fs.copyFileSync(wheel, dest);
@@ -141,14 +176,22 @@ const cachePackage = async (appRoot, packageName, pipCacheDir) => {
  * Install a package from cache (offline)
  */
 const installFromCache = async (event, { appRoot, packageName }) => {
-  const { getVenvPaths, ensureVirtualEnv } = require("./pip-manager");
+  const {
+    getVenvPaths,
+    ensureVirtualEnv,
+    getPipSpawnArgs,
+  } = require("./pip-manager");
 
   const venvResult = ensureVirtualEnv(appRoot);
   if (!venvResult.success) return venvResult;
 
   const cacheDir = getCacheDir(appRoot);
   if (!fs.existsSync(cacheDir)) {
-    return { success: false, error: "No offline cache available", requiresNetwork: true };
+    return {
+      success: false,
+      error: "No offline cache available",
+      requiresNetwork: true,
+    };
   }
 
   // Find wheel in cache matching package
@@ -156,20 +199,30 @@ const installFromCache = async (event, { appRoot, packageName }) => {
   const matchingWheels = entries.filter((f) => {
     const name = f.toLowerCase();
     const pn = patternForPackage(packageName.toLowerCase());
-    return name.match(new RegExp(pn)) && (f.endsWith(".whl") || f.endsWith(".tar.gz"));
+    return (
+      name.match(new RegExp(pn)) &&
+      (f.endsWith(".whl") || f.endsWith(".tar.gz"))
+    );
   });
 
   if (matchingWheels.length === 0) {
-    return { success: false, error: `Package '${packageName}' not found in offline cache`, requiresNetwork: true };
+    return {
+      success: false,
+      error: `Package '${packageName}' not found in offline cache`,
+      requiresNetwork: true,
+    };
   }
 
   // Install from local wheel file
   const wheelPath = path.join(cacheDir, matchingWheels[0]);
-  const result = spawnSync(venvResult.venvPaths.pip, ["install", wheelPath, "--quiet"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 60000,
-  });
+  const result = spawnSync(
+    ...getPipSpawnArgs(venvResult.venvPaths, ["install", wheelPath, "--quiet"]),
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 60000,
+    },
+  );
 
   return {
     success: result.status === 0,
@@ -212,7 +265,10 @@ const removeFromCache = async (event, { appRoot, packageName }) => {
   let removed = 0;
 
   for (const entry of entries) {
-    if (entry.toLowerCase().match(new RegExp(pn)) && (entry.endsWith(".whl") || entry.endsWith(".tar.gz"))) {
+    if (
+      entry.toLowerCase().match(new RegExp(pn)) &&
+      (entry.endsWith(".whl") || entry.endsWith(".tar.gz"))
+    ) {
       try {
         fs.unlinkSync(path.join(cacheDir, entry));
         removed++;

@@ -1,6 +1,6 @@
 {
   "name": "nomokit-desktop",
-  "version": "3.0.3",
+  "version": "3.0.5",
   "main": "main.js",
   "scripts": {
     "test": "node test/run-tests.js && node test/e2e/e2e-test-matrix.js",
@@ -11,9 +11,10 @@
     "postinstall": "electron-rebuild -f -w @abandonware/noble",
     "check-bundled-python": "node test/smoke/check_bundled_python.js",
     "install-python-payload": "node scripts/install_python_payload.js",
+    "build-venv": "node scripts/build-venv.js",
     "clean:tools": "rimraf \"src/link/tools/Arduino/staging\" \"src/link/tools/Arduino/tmp\"",
     "clean:native": "rimraf \"node_modules/@abandonware/noble/build\"",
-    "prebuild": "npm run clean:tools && npm run prebuild:avr",
+    "prebuild": "npm run clean:tools && npm run prebuild:avr && node scripts/install_python_payload.js && node scripts/build-venv.js",
     "prebuild:avr": "node -e \"var fs=require('fs'),p=require('path'),cfgPath='src/link/tools/Arduino/arduino-cli.yaml';if(fs.existsSync(cfgPath)){var y=require('js-yaml'),cfg=y.load(fs.readFileSync(cfgPath,'utf8'));var dir=cfg.directories.data,avrDir=p.join(dir,'packages/arduino/hardware/avr');if(!fs.existsSync(avrDir)){require('child_process').execSync('arduino-cli core install arduino:avr --config-file arduino-cli.yaml',{cwd:'src/link/tools/Arduino',stdio:'inherit'})}}else{console.warn('prebuild:avr — arduino-cli.yaml not found, skipping AVR core install.')}\"",
     "build": "npm run prebuild && electron-builder --win",
     "build:mac": "npm run prebuild && electron-builder --mac",
@@ -93,6 +94,13 @@
       {
         "from": "src/nomokitjr",
         "to": "nomokitjr",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "data/python-env",
+        "to": "python-env",
         "filter": [
           "**/*"
         ]

@@ -57,7 +57,7 @@ done:
 !macroend
 
 !macro customCheckAppRunning
-  SetDetailsPrint textonly    
+  SetDetailsPrint textonly
   ${GetProcessInfo} 0 $pid $1 $2 $3 $4
   ${if} $3 != "${APP_EXECUTABLE_FILENAME}"
     ${if} ${isUpdated}
@@ -72,13 +72,10 @@ done:
         DetailPrint `Allow app to exit without explicit kill, sleeping for 5 sec...`
         Sleep 5000
       ${endIf}
-      Goto doStopProcess
-      Quit
 
-      doStopProcess:
       DetailPrint `Closing running "${PRODUCT_NAME}"...`
       # https://github.com/electron-userland/electron-builder/issues/2516#issuecomment-372009092
-      nsExec::Exec `taskkill /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid"` $R0
+      nsExec::Exec `taskkill /f /im "${APP_EXECUTABLE_FILENAME}" /fi "PID ne $pid"` $R0
       # to ensure that files are not "in-use"
       Sleep 3000
 
@@ -110,11 +107,17 @@ done:
         # Ask user to close it manually
         ${if} $R1 > $R2
           DetailPrint `Unable to close "${PRODUCT_NAME}" (taskkill exit code $R0). Maybe elevated? Kill it...`
-          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY loop
+          MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY loop_retry
           Quit
         ${else}
           Goto loop
         ${endIf}
+
+      loop_retry:
+        # Reset retry counter so user gets 5 more kill attempts
+        StrCpy $R1 0
+        Goto loop
+
       not_running:
         DetailPrint `Not running, continue installation...`
     ${endIf}

@@ -149,6 +149,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
         packageName,
         upgrade: options.upgrade || false,
         pre: options.pre || false,
+        versionSpecifier: options.versionSpecifier || null,
+        timeoutMs: options.timeoutMs || null,
       });
     },
     uninstall: async (packageName) => {
@@ -172,6 +174,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ensureVenv: async () => {
       return await ipcRenderer.invoke("pip-ensure-venv");
     },
+    resetPythonCache: async () => {
+      return await ipcRenderer.invoke("pip-reset-python-cache");
+    },
     // Subscribe to pip progress events from main process
     onProgress: (callback) => {
       const handler = (event, data) => callback(data);
@@ -179,6 +184,27 @@ contextBridge.exposeInMainWorld("electronAPI", {
       return () => {
         ipcRenderer.removeListener("pip-operation-progress", handler);
       };
+    },
+    getErrorHistory: async () => {
+      return await ipcRenderer.invoke("pip-error-history");
+    },
+    // M7: Pip config management
+    setConfig: async (key, value) => {
+      return await ipcRenderer.invoke("pip-set-config", { key, value });
+    },
+    getConfig: async (key) => {
+      return await ipcRenderer.invoke("pip-get-config", { key });
+    },
+    listConfig: async () => {
+      return await ipcRenderer.invoke("pip-list-config");
+    },
+    // M9: Upgrade pip
+    upgrade: async () => {
+      return await ipcRenderer.invoke("pip-upgrade");
+    },
+    // M10: Search packages
+    search: async (query) => {
+      return await ipcRenderer.invoke("pip-search", { query });
     },
   },
   // Project dependency profile API (Phase 7)
@@ -236,8 +262,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     generateReport: async () => {
       return await ipcRenderer.invoke("diagnostic-generate-report");
     },
-    saveReport: async () => {
-      return await ipcRenderer.invoke("diagnostic-save-report");
+    saveReport: async (options) => {
+      return await ipcRenderer.invoke("diagnostic-save-report", {
+        format: options?.format || "txt",
+      });
     },
   },
   // Offline wheel cache API (Phase 7)

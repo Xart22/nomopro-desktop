@@ -28,13 +28,22 @@ const collectDiagnostics = async (event, { appRoot }) => {
       hostname: os.hostname(),
       cpus: os.cpus().length,
       memory: `${Math.round(os.totalmem() / 1024 / 1024 / 1024)} GB`,
-      freeMemory: `${Math.round(os.freemem() / 1024 / 1024 / 1024 * 100) / 100} GB`,
+      freeMemory: `${Math.round((os.freemem() / 1024 / 1024 / 1024) * 100) / 100} GB`,
       uptime: `${Math.round(os.uptime() / 3600)} hours`,
       userInfo: os.userInfo().username,
     },
     app: {
       name: "nomopro-desktop",
-      version: "2.1.3",
+      version: (() => {
+        try {
+          const pkg = JSON.parse(
+            fs.readFileSync(path.join(appRoot, "package.json"), "utf8"),
+          );
+          return pkg.version || "unknown";
+        } catch (e) {
+          return "unknown";
+        }
+      })(),
       appRoot: appRoot,
       nodeVersion: process.version,
       electronVersion: process.versions.electron || "unknown",
@@ -49,8 +58,42 @@ const collectDiagnostics = async (event, { appRoot }) => {
     errors: [],
   };
 
-  // Python version check
-  const candidates = ["python3", "python", "py"];
+  // Python version check — prioritaskan bundled Python, mirror getPythonCandidates() di main.js
+  const candidates = [];
+  // Bundled Python — try resourcesPath first (packaged), fallback appRoot (dev)
+  const bundledDirs = [path.join(appRoot, "python")];
+  try {
+    const { app } = require("electron");
+    if (app.isPackaged) {
+      bundledDirs.unshift(path.join(process.resourcesPath, "python"));
+    }
+  } catch (_) {}
+  for (const pythonDir of bundledDirs) {
+    try {
+      if (fs.existsSync(pythonDir)) {
+        const isWin = process.platform === "win32";
+        const pexe = path.join(
+          pythonDir,
+          isWin ? "python.exe" : "bin",
+          isWin ? "python.exe" : "python3",
+        );
+        if (fs.existsSync(pexe)) candidates.push(pexe);
+      }
+    } catch (e) {}
+  }
+  // Virtualenv Python
+  try {
+    const venvDir = path.join(appRoot, "data", "python-env");
+    const isWin = process.platform === "win32";
+    const venvPy = path.join(
+      venvDir,
+      isWin ? "Scripts" : "bin",
+      isWin ? "python.exe" : "python3",
+    );
+    if (fs.existsSync(venvPy)) candidates.push(venvPy);
+  } catch (e) {}
+  // System PATH fallback
+  candidates.push("python3", "python", "py");
   for (const c of candidates) {
     try {
       const args = c === "py" ? ["-3", "--version"] : ["--version"];
@@ -101,34 +144,71 @@ const collectDiagnostics = async (event, { appRoot }) => {
     bundle.venv.exists = true;
     bundle.venv.path = venvDir;
     const isWin = process.platform === "win32";
-    const pyPath = path.join(venvDir, isWin ? "Scripts" : "bin", isWin ? "python.exe" : "python3");
+    const pyPath = path.join(
+      venvDir,
+      isWin ? "Scripts" : "bin",
+      isWin ? "python.exe" : "python3",
+    );
     bundle.venv.pythonExists = fs.existsSync(pyPath);
-    const pipPath = path.join(venvDir, isWin ? "Scripts" : "bin", isWin ? "pip.exe" : "pip3");
-    bundle.venv.pipExists = fs.existsSync(pipPath);
+    // Use python -m pip instead of pip.exe (incompatible launcher on some Windows builds)
+    bundle.venv.pipExists = fs.existsSync(pyPath);
 
-    // Count installed packages
+    // Get pip version
     if (bundle.venv.pipExists) {
       try {
-        const listRes = spawnSync(pipPath, ["list", "--format=json"], {
+        const verRes = spawnSync(pyPath, ["-m", "pip", "--version"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 10000,
         });
+        if (verRes.status === 0) {
+          bundle.venv.pipVersion = (verRes.stdout || "").trim();
+        }
+      } catch (_) {}
+    }
+
+    // Count installed packages
+    if (bundle.venv.pipExists) {
+      try {
+        const listRes = spawnSync(
+          pyPath,
+          ["-m", "pip", "list", "--format=json"],
+          {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 10000,
+          },
+        );
         if (listRes.status === 0) {
-          const pkgs = JSON.parse(listRes.stdout);
-          bundle.venv.packageCount = pkgs.length;
-          bundle.venv.packages = pkgs.map((p) => `${p.name}==${p.version}`);
+          try {
+            const pkgs = JSON.parse(listRes.stdout);
+            bundle.venv.packageCount = pkgs.length;
+            bundle.venv.packages = pkgs.map((p) => `${p.name}==${p.version}`);
+          } catch (parseErr) {
+            bundle.venv.packageCount = -1;
+            bundle.venv.listRaw = listRes.stdout.slice(0, 500);
+            bundle.venv.listError = `JSON parse error: ${parseErr.message}`;
+          }
+        } else {
+          bundle.venv.packageCount = -1;
+          bundle.venv.listError = `pip list exit ${listRes.status}: ${(listRes.stderr || "").slice(0, 200)}`;
         }
       } catch (e) {
         bundle.venv.listError = e.message;
       }
     }
 
+    // Warn: venv exists but packages = 0 (likely relocation issue)
+    if (bundle.venv.pipExists && bundle.venv.packageCount === 0) {
+      bundle.venv.warning =
+        "Venv has 0 packages — pyvenv.cfg home path may be stale. Run Recovery → Restore Python.";
+    }
+
     // Check venv size
     try {
       const { size } = walkDirSize(venvDir, { excludeDir: "__pycache__" });
       bundle.venv.sizeBytes = size;
-      bundle.venv.sizeMB = Math.round(size / 1024 / 1024 * 100) / 100;
+      bundle.venv.sizeMB = Math.round((size / 1024 / 1024) * 100) / 100;
     } catch (e) {
       bundle.venv.sizeError = e.message;
     }
@@ -142,28 +222,59 @@ const collectDiagnostics = async (event, { appRoot }) => {
     : process.env.HOME
       ? path.join(process.env.HOME, "Documents")
       : null;
+
+  // Use the same logic as ipc.js ensureDefaultStorageDir
+  let storageDir = null;
   if (docsDir) {
-    const storageDir = path.join(docsDir, "OpenBlock");
+    storageDir = path.join(docsDir, "Nomokit");
     bundle.fileStorage.defaultDir = storageDir;
     bundle.fileStorage.exists = fs.existsSync(storageDir);
-    if (bundle.fileStorage.exists) {
-      try {
-        const files = fs.readdirSync(storageDir).filter((f) => {
-          const full = path.join(storageDir, f);
-          return fs.statSync(full).isFile();
-        });
-        bundle.fileStorage.fileCount = files.length;
-        bundle.fileStorage.files = files;
-      } catch (e) {
-        bundle.fileStorage.listError = e.message;
-      }
+  } else {
+    bundle.fileStorage.defaultDir = null;
+    bundle.fileStorage.exists = false;
+  }
+
+  // Also check fallback dir (used when Documents is inaccessible)
+  const fallbackDir = path.join(appRoot, "data", "projects");
+  const fallbackExists = fs.existsSync(fallbackDir);
+
+  // Use whichever actually exists
+  if (!bundle.fileStorage.exists && fallbackExists) {
+    storageDir = fallbackDir;
+    bundle.fileStorage.defaultDir = fallbackDir;
+    bundle.fileStorage.exists = true;
+  }
+
+  if (bundle.fileStorage.exists && storageDir) {
+    try {
+      const files = fs.readdirSync(storageDir).filter((f) => {
+        const full = path.join(storageDir, f);
+        return fs.statSync(full).isFile();
+      });
+      bundle.fileStorage.fileCount = files.length;
+      bundle.fileStorage.files = files;
+    } catch (e) {
+      bundle.fileStorage.listError = e.message;
     }
   }
 
-  // Check bundled python payload
-  const pythonDir = path.join(appRoot, "python");
-  bundle.python.bundledExists = fs.existsSync(pythonDir);
-  if (bundle.python.bundledExists) {
+  // Check bundled python payload — try resourcesPath first when packaged
+  const pythonDirs = [path.join(appRoot, "python")];
+  try {
+    const { app } = require("electron");
+    if (app.isPackaged) {
+      pythonDirs.unshift(path.join(process.resourcesPath, "python"));
+    }
+  } catch (_) {}
+  let pythonDir = null;
+  for (const d of pythonDirs) {
+    if (fs.existsSync(d)) {
+      pythonDir = d;
+      break;
+    }
+  }
+  bundle.python.bundledExists = !!pythonDir;
+  if (pythonDir) {
     try {
       const entries = fs.readdirSync(pythonDir);
       bundle.python.bundledFiles = entries;
@@ -174,38 +285,289 @@ const collectDiagnostics = async (event, { appRoot }) => {
     }
   }
 
+  // Preload contracts verification — scan preload.js for contextBridge exposures
+  try {
+    const preloadPath = path.join(appRoot, "preload.js");
+    if (fs.existsSync(preloadPath)) {
+      const preloadContent = fs.readFileSync(preloadPath, "utf8");
+      const exposures = [];
+      const regex = /exposeInMainWorld\("(\w+)"\s*,\s*\{/g;
+      let match;
+      while ((match = regex.exec(preloadContent)) !== null) {
+        exposures.push(match[1]);
+      }
+      bundle.preloadContracts = {
+        file: "preload.js",
+        exists: true,
+        exposedApis: exposures,
+        functionCount: (preloadContent.match(/async\s+\(/g) || []).length,
+      };
+    } else {
+      bundle.preloadContracts = {
+        file: "preload.js",
+        exists: false,
+        exposedApis: [],
+      };
+    }
+  } catch (e) {
+    bundle.preloadContracts = {
+      file: "preload.js",
+      exists: false,
+      error: e.message,
+      exposedApis: [],
+    };
+  }
+
+  // Hardware / Serial ports (M1)
+  try {
+    const { SerialPort } = require("serialport");
+    bundle.serialPorts = [];
+    SerialPort.list()
+      .then((ports) => {
+        bundle.serialPorts = ports.map((p) => ({
+          path: p.path,
+          manufacturer: p.manufacturer || "unknown",
+          productId: p.productId || "",
+          vendorId: p.vendorId || "",
+        }));
+      })
+      .catch(() => {
+        bundle.serialPorts = [{ error: "Failed to list serial ports" }];
+      });
+  } catch (e) {
+    bundle.serialPorts = [{ error: "serialport not available" }];
+  }
+
+  // GPU info (M4)
+  try {
+    const gpuResult = spawnSync(
+      process.platform === "win32" ? "wmic" : "system_profiler",
+      process.platform === "win32"
+        ? ["path", "win32_VideoController", "get", "name"]
+        : ["SPDisplaysDataType"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000 },
+    );
+    if (gpuResult.status === 0) {
+      bundle.gpu = { raw: gpuResult.stdout.trim() };
+    } else {
+      bundle.gpu = { notAvailable: true };
+    }
+    // Also check nvidia-smi
+    const nvidiaResult = spawnSync(
+      "nvidia-smi",
+      ["--query-gpu=name,driver_version,memory.total", "--format=csv,noheader"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000 },
+    );
+    if (nvidiaResult.status === 0) {
+      bundle.gpu.nvidia = nvidiaResult.stdout.trim();
+      bundle.gpu.hasCuda = true;
+    }
+  } catch (_) {
+    bundle.gpu = { notAvailable: true };
+  }
+
   // Check project deps profiles
   const depsDir = path.join(appRoot, "data", "project-deps");
   bundle.projectDepsExist = fs.existsSync(depsDir);
   if (bundle.projectDepsExist) {
     try {
-      bundle.projectDepsProfiles = fs.readdirSync(depsDir).filter((f) => f.endsWith("-requirements.txt"));
+      bundle.projectDepsProfiles = fs
+        .readdirSync(depsDir)
+        .filter((f) => f.endsWith("-requirements.txt"));
     } catch (e) {
       bundle.projectDepsError = e.message;
     }
   }
 
+  // Network connectivity check (M2)
+  try {
+    const https = require("https");
+    const http = require("http");
+    bundle.network = { nomokit: false, pypi: false };
+    // Check nomo-kit.com
+    try {
+      await new Promise((resolve) => {
+        const req = https.get(
+          "https://nomo-kit.com/api/ping",
+          { timeout: 5000 },
+          (res) => {
+            bundle.network.nomokit = res.statusCode === 200;
+            resolve();
+          },
+        );
+        req.on("error", () => {
+          bundle.network.nomokit = false;
+          resolve();
+        });
+        req.on("timeout", () => {
+          req.destroy();
+          bundle.network.nomokit = false;
+          resolve();
+        });
+      });
+    } catch (_) {}
+    // Check pypi.org
+    try {
+      await new Promise((resolve) => {
+        const req = https.get("https://pypi.org", { timeout: 5000 }, (res) => {
+          bundle.network.pypi = res.statusCode === 200;
+          resolve();
+        });
+        req.on("error", () => {
+          bundle.network.pypi = false;
+          resolve();
+        });
+        req.on("timeout", () => {
+          req.destroy();
+          bundle.network.pypi = false;
+          resolve();
+        });
+      });
+    } catch (_) {}
+  } catch (_) {
+    bundle.network = {
+      nomokit: false,
+      pypi: false,
+      error: "Network check unavailable",
+    };
+  }
+
+  // IPC handler verification (M5) — list of expected handlers
+  const expectedHandlers = [
+    "file-storage-save",
+    "file-storage-read",
+    "file-storage-list",
+    "file-storage-delete",
+    "file-storage-get-default-dir",
+    "getUserData",
+    "get-python-candidates",
+    "nomopro-python-run",
+    "nomopro-python-stop",
+    "nomopro-python-write-stdin",
+    "micropython-flash",
+    "micropython-upload",
+    "micropython-detect",
+    "pip-install",
+    "pip-uninstall",
+    "pip-list",
+    "pip-show",
+    "pip-cache-info",
+    "pip-cache-clear",
+    "pip-run-in-venv",
+    "pip-ensure-venv",
+    "pip-reset-python-cache",
+    "project-deps-generate",
+    "project-deps-install",
+    "project-deps-export",
+    "project-deps-import",
+    "project-deps-diff",
+    "project-deps-list-profiles",
+    "project-deps-delete-profile",
+    "safe-install-classify",
+    "safe-install-preflight",
+    "safe-install-warning",
+    "safe-install-allowlist",
+    "diagnostic-collect",
+    "diagnostic-generate-report",
+    "diagnostic-save-report",
+    "offline-cache-info",
+    "offline-cache-install",
+    "offline-cache-clear",
+    "offline-cache-remove",
+    "recovery-verify-python",
+    "recovery-restore-python",
+    "recovery-create-backup",
+    "recovery-verify-shortcuts",
+  ];
+  // IPC handler verification (M5) — scan source files for ipcMain.handle calls
+  // Electron 42+ no longer exposes ipcMain._events, so we scan source code.
+  let foundCount = 0;
+  const missingList = [];
+  try {
+    const scanDirs = [path.join(appRoot, "main.js")];
+    // Also scan src/main/ directory
+    const mainSrcDir = path.join(appRoot, "src", "main");
+    if (fs.existsSync(mainSrcDir)) {
+      const files = fs
+        .readdirSync(mainSrcDir)
+        .filter((f) => f.endsWith(".js"))
+        .map((f) => path.join(mainSrcDir, f));
+      scanDirs.push(...files);
+    }
+    const registeredHandlers = new Set();
+    const handleRegex = /ipcMain\.handle\(["']([\w-]+)["']/g;
+    for (const filePath of scanDirs) {
+      if (!fs.existsSync(filePath)) continue;
+      const content = fs.readFileSync(filePath, "utf8");
+      let m;
+      while ((m = handleRegex.exec(content)) !== null) {
+        registeredHandlers.add(m[1]);
+      }
+    }
+    for (const expected of expectedHandlers) {
+      if (registeredHandlers.has(expected)) {
+        foundCount++;
+      } else {
+        missingList.push(expected);
+      }
+    }
+  } catch (e) {
+    bundle.ipcHandlers = {
+      expected: expectedHandlers.length,
+      verificationNote: e.message,
+    };
+  }
+  bundle.ipcHandlers = {
+    expected: expectedHandlers.length,
+    found: foundCount,
+    missing: missingList,
+  };
+
   // Environment variables (sanitized)
-  const safeEnvVars = ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "TMP", "TEMP", "PYTHONUNBUFFERED"];
+  const safeEnvVars = [
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "SYSTEMROOT",
+    "TMP",
+    "TEMP",
+    "PYTHONUNBUFFERED",
+  ];
   bundle.environment = {};
   for (const v of safeEnvVars) {
     bundle.environment[v] = process.env[v] || "(not set)";
   }
 
-  // Read runner log if exists
+  // Pip error history — record of failed install/uninstall for diagnostic
+  try {
+    const { getPipErrorHistory } = require("./pip-manager");
+    bundle.pipErrors = getPipErrorHistory();
+  } catch (e) {
+    bundle.pipErrors = [];
+  }
+
+  // Read runner log if exists — include last 50 lines of content (M3)
   const logDir = path.join(appRoot, "logs");
   if (fs.existsSync(logDir)) {
     try {
-      const logFiles = fs.readdirSync(logDir)
+      const logFiles = fs
+        .readdirSync(logDir)
         .filter((f) => f.endsWith(".log"))
-        .slice(-3); // Last 3 log files
+        .slice(-3);
       bundle.runnerLogs = logFiles.map((f) => {
         const fullPath = path.join(logDir, f);
         const stat = fs.statSync(fullPath);
+        let content = "";
+        try {
+          const raw = fs.readFileSync(fullPath, "utf8");
+          const lines = raw.split("\n").filter(Boolean);
+          content = lines.slice(-50).join("\n");
+        } catch (_) {}
         return {
           name: f,
           size: stat.size,
           modifiedAt: stat.mtime.toISOString(),
+          lastLines: content,
         };
       });
     } catch (e) {
@@ -226,7 +588,7 @@ const generateReport = async (event, { appRoot }) => {
   const { bundle } = result;
 
   let report = `============================================\n`;
-  report += `  Nomopro-Desktop Diagnostic Report\n`;
+  report += `  Nomokit-Desktop Diagnostic Report\n`;
   report += `  Generated: ${bundle.timestamp}\n`;
   report += `============================================\n\n`;
 
@@ -313,23 +675,54 @@ const generateReport = async (event, { appRoot }) => {
 };
 
 /**
- * Save diagnostic report to file
+ * Generate diagnostic report as JSON (M6)
  */
-const saveReport = async (event, { appRoot }) => {
-  const result = await generateReport(event, { appRoot });
+const generateJsonReport = async (event, { appRoot }) => {
+  const result = await collectDiagnostics(event, { appRoot });
+  if (!result.success) return result;
+  return {
+    success: true,
+    jsonReport: JSON.stringify(result.bundle, null, 2),
+    bundle: result.bundle,
+  };
+};
+
+/**
+ * Save diagnostic report to file — user picks path via save dialog
+ */
+const saveReport = async (event, { appRoot, format }) => {
+  const fmt = format === "json" ? "json" : "txt";
+  const result =
+    fmt === "json"
+      ? await generateJsonReport(event, { appRoot })
+      : await generateReport(event, { appRoot });
   if (!result.success) return result;
 
-  const reportDir = path.join(appRoot, "data", "diagnostics");
-  if (!fs.existsSync(reportDir)) {
-    fs.mkdirSync(reportDir, { recursive: true });
+  // Show native save dialog so user picks location
+  const { dialog } = require("electron");
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const defaultName = `diagnostic-${timestamp}.${fmt}`;
+
+  const dialogResult = await dialog.showSaveDialog({
+    title: "Save Diagnostic Report",
+    defaultPath: defaultName,
+    filters: [{ name: fmt === "json" ? "JSON" : "Text", extensions: [fmt] }],
+  });
+
+  if (dialogResult.canceled || !dialogResult.filePath) {
+    return { success: false, canceled: true };
   }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const reportPath = path.join(reportDir, `diagnostic-${timestamp}.txt`);
-  fs.writeFileSync(reportPath, result.report, "utf8");
+  const content = fmt === "json" ? result.jsonReport : result.report;
+  fs.writeFileSync(dialogResult.filePath, content, "utf8");
 
-  logger.info(`Diagnostic report saved to ${reportPath}`);
-  return { success: true, path: reportPath, report: result.report };
+  logger.info(`Diagnostic report saved to ${dialogResult.filePath} (${fmt})`);
+  return {
+    success: true,
+    path: dialogResult.filePath,
+    format: fmt,
+    report: content,
+  };
 };
 
 const registerDiagnosticHandlers = ({ appRoot }) => {
@@ -341,8 +734,13 @@ const registerDiagnosticHandlers = ({ appRoot }) => {
     return generateReport(event, { appRoot });
   });
 
-  ipcMain.handle("diagnostic-save-report", async (event) => {
-    return saveReport(event, { appRoot });
+  ipcMain.handle("diagnostic-generate-json", async (event) => {
+    return generateJsonReport(event, { appRoot });
+  });
+
+  ipcMain.handle("diagnostic-save-report", async (event, opts) => {
+    const { format } = opts || {};
+    return saveReport(event, { appRoot, format });
   });
 
   logger.info("Diagnostic bundle IPC handlers registered");

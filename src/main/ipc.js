@@ -7,14 +7,13 @@ const logger = require("./logger");
 
 // Default storage path: Documents/OpenBlock (Windows) or ~/Documents/OpenBlock (macOS)
 const getDefaultStorageDir = () => {
-  const docsDir =
-    process.env.USERPROFILE
-      ? path.join(process.env.USERPROFILE, "Documents")
-      : process.env.HOME
-        ? path.join(process.env.HOME, "Documents")
-        : path.join(__dirname, "..", "..", "data", "projects");
+  const docsDir = process.env.USERPROFILE
+    ? path.join(process.env.USERPROFILE, "Documents")
+    : process.env.HOME
+      ? path.join(process.env.HOME, "Documents")
+      : path.join(__dirname, "..", "..", "data", "projects");
 
-  const storageDir = path.join(docsDir, "OpenBlock");
+  const storageDir = path.join(docsDir, "Nomokit");
   return storageDir;
 };
 
@@ -59,7 +58,11 @@ const registerFileStorageHandlers = () => {
 
       fs.writeFileSync(finalPath, content, "utf8");
       logger.info(`File saved: ${finalPath}`);
-      return { success: true, path: finalPath, fileName: path.basename(finalPath) };
+      return {
+        success: true,
+        path: finalPath,
+        fileName: path.basename(finalPath),
+      };
     } catch (e) {
       logger.error(`File save error: ${e.message}`);
       return { success: false, error: e.message };
@@ -158,7 +161,10 @@ function registerIpc({ win, appRoot, socket }) {
 
   ipcMain.on("logout", async (event, arg) => {
     try {
-      fs.writeFileSync(path.join(appRoot, "data/user.json"), JSON.stringify({}));
+      fs.writeFileSync(
+        path.join(appRoot, "data/user.json"),
+        JSON.stringify({}),
+      );
     } catch (e) {
       logger.error(`Failed to clear user.json on logout: ${e.message}`);
     }
