@@ -141,7 +141,7 @@ const createWindow = () => {
   } else {
     if (token.token !== undefined) {
       win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-      // win.loadURL("http://127.0.0.1:8601");
+      //win.loadURL("http://127.0.0.1:8601");
     } else {
       win.loadFile(path.join(__dirname, "/src/auth/index.html"));
     }

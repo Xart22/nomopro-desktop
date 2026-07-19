@@ -43,22 +43,35 @@ const getRequirementsPath = (appRoot, projectId) => {
  * Generate requirements.txt from currently installed packages in venv
  * Uses pip freeze to capture exact versions
  */
-const generateRequirements = async (event, { appRoot, projectId = "default" }) => {
-  const { getVenvPaths, ensureVirtualEnv } = require("./pip-manager");
+const generateRequirements = async (
+  event,
+  { appRoot, projectId = "default" },
+) => {
+  const {
+    getVenvPaths,
+    ensureVirtualEnv,
+    getPipSpawnArgs,
+  } = require("./pip-manager");
 
   const venvResult = ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
     return venvResult;
   }
 
-  const result = spawnSync(venvResult.venvPaths.pip, ["freeze"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 15000,
-  });
+  const result = spawnSync(
+    ...getPipSpawnArgs(venvResult.venvPaths, ["freeze"]),
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+    },
+  );
 
   if (result.status !== 0) {
-    return { success: false, error: (result.stderr || "pip freeze failed").trim() };
+    return {
+      success: false,
+      error: (result.stderr || "pip freeze failed").trim(),
+    };
   }
 
   const depsPath = getRequirementsPath(appRoot, projectId);
@@ -68,7 +81,12 @@ const generateRequirements = async (event, { appRoot, projectId = "default" }) =
     .filter((line) => {
       const l = (line || "").trim();
       if (!l || l.startsWith("#")) return false;
-      const name = l.split("==")[0].split(">=")[0].split("@")[0].trim().toLowerCase();
+      const name = l
+        .split("==")[0]
+        .split(">=")[0]
+        .split("@")[0]
+        .trim()
+        .toLowerCase();
       return !["pip", "setuptools", "wheel"].includes(name);
     })
     .join("\n");
@@ -87,8 +105,15 @@ const generateRequirements = async (event, { appRoot, projectId = "default" }) =
 /**
  * Install packages from a requirements file into the venv
  */
-const installFromRequirements = async (event, { appRoot, projectId = "default", requirementsContent }) => {
-  const { getVenvPaths, ensureVirtualEnv } = require("./pip-manager");
+const installFromRequirements = async (
+  event,
+  { appRoot, projectId = "default", requirementsContent },
+) => {
+  const {
+    getVenvPaths,
+    ensureVirtualEnv,
+    getPipSpawnArgs,
+  } = require("./pip-manager");
 
   const venvResult = ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
@@ -96,17 +121,26 @@ const installFromRequirements = async (event, { appRoot, projectId = "default", 
   }
 
   // Write temporary requirements file
-  const tmpFile = path.join(getDepsDir(appRoot), `_tmp_${projectId || "default"}.txt`);
+  const tmpFile = path.join(
+    getDepsDir(appRoot),
+    `_tmp_${projectId || "default"}.txt`,
+  );
   fs.writeFileSync(tmpFile, requirementsContent || "", "utf8");
 
   try {
-    const result = spawnSync(venvResult.venvPaths.pip, [
-      "install", "-r", tmpFile, "--quiet"
-    ], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 120000,
-    });
+    const result = spawnSync(
+      ...getPipSpawnArgs(venvResult.venvPaths, [
+        "install",
+        "-r",
+        tmpFile,
+        "--quiet",
+      ]),
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 120000,
+      },
+    );
 
     if (result.status !== 0) {
       return {
@@ -126,7 +160,9 @@ const installFromRequirements = async (event, { appRoot, projectId = "default", 
       message: "Requirements installed successfully",
     };
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch (e) {}
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch (e) {}
   }
 };
 
@@ -140,7 +176,10 @@ const exportDeps = async (event, { appRoot, projectId = "default" }) => {
 /**
  * Import project dependencies from external requirements.txt content
  */
-const importDeps = async (event, { appRoot, projectId = "default", requirementsContent }) => {
+const importDeps = async (
+  event,
+  { appRoot, projectId = "default", requirementsContent },
+) => {
   if (!requirementsContent || requirementsContent.trim().length === 0) {
     return { success: false, error: "Empty requirements content" };
   }
@@ -149,7 +188,11 @@ const importDeps = async (event, { appRoot, projectId = "default", requirementsC
   fs.writeFileSync(depsPath, requirementsContent, "utf8");
   logger.info(`Requirements imported for project ${projectId}`);
 
-  return { success: true, path: depsPath, packageCount: requirementsContent.split("\n").filter(Boolean).length };
+  return {
+    success: true,
+    path: depsPath,
+    packageCount: requirementsContent.split("\n").filter(Boolean).length,
+  };
 };
 
 /**
@@ -176,7 +219,11 @@ const readRequirements = (appRoot, projectId) => {
  * Returns lists of packages to add/remove
  */
 const diffRequirements = async (event, { appRoot, projectId = "default" }) => {
-  const { getVenvPaths, ensureVirtualEnv } = require("./pip-manager");
+  const {
+    getVenvPaths,
+    ensureVirtualEnv,
+    getPipSpawnArgs,
+  } = require("./pip-manager");
 
   const venvResult = ensureVirtualEnv(appRoot);
   if (!venvResult.success) {
@@ -184,14 +231,20 @@ const diffRequirements = async (event, { appRoot, projectId = "default" }) => {
   }
 
   // Read current installed packages
-  const freezeResult = spawnSync(venvResult.venvPaths.pip, ["freeze"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 15000,
-  });
+  const freezeResult = spawnSync(
+    ...getPipSpawnArgs(venvResult.venvPaths, ["freeze"]),
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 15000,
+    },
+  );
 
   if (freezeResult.status !== 0) {
-    return { success: false, error: (freezeResult.stderr || "pip freeze failed").trim() };
+    return {
+      success: false,
+      error: (freezeResult.stderr || "pip freeze failed").trim(),
+    };
   }
 
   const installed = new Map();
@@ -199,7 +252,11 @@ const diffRequirements = async (event, { appRoot, projectId = "default" }) => {
   for (const line of installedLines) {
     const parts = line.split("==");
     if (parts.length >= 2) {
-      installed.set(parts[0].trim().toLowerCase(), { name: parts[0].trim(), version: parts[1].trim(), line });
+      installed.set(parts[0].trim().toLowerCase(), {
+        name: parts[0].trim(),
+        version: parts[1].trim(),
+        line,
+      });
     }
   }
 
@@ -211,9 +268,17 @@ const diffRequirements = async (event, { appRoot, projectId = "default" }) => {
     for (const line of reqLines) {
       const parts = line.split("==");
       if (parts.length >= 2) {
-        required.set(parts[0].trim().toLowerCase(), { name: parts[0].trim(), version: parts[1].trim(), line });
+        required.set(parts[0].trim().toLowerCase(), {
+          name: parts[0].trim(),
+          version: parts[1].trim(),
+          line,
+        });
       } else {
-        required.set(line.trim().toLowerCase(), { name: line.trim(), version: "*", line });
+        required.set(line.trim().toLowerCase(), {
+          name: line.trim(),
+          version: "*",
+          line,
+        });
       }
     }
   }
@@ -306,17 +371,27 @@ const registerProjectDepsHandlers = ({ appRoot }) => {
     return generateRequirements(event, { appRoot, projectId });
   });
 
-  ipcMain.handle("project-deps-install", async (event, { projectId, requirementsContent }) => {
-    return installFromRequirements(event, { appRoot, projectId, requirementsContent });
-  });
+  ipcMain.handle(
+    "project-deps-install",
+    async (event, { projectId, requirementsContent }) => {
+      return installFromRequirements(event, {
+        appRoot,
+        projectId,
+        requirementsContent,
+      });
+    },
+  );
 
   ipcMain.handle("project-deps-export", async (event, { projectId }) => {
     return exportDeps(event, { appRoot, projectId });
   });
 
-  ipcMain.handle("project-deps-import", async (event, { projectId, requirementsContent }) => {
-    return importDeps(event, { appRoot, projectId, requirementsContent });
-  });
+  ipcMain.handle(
+    "project-deps-import",
+    async (event, { projectId, requirementsContent }) => {
+      return importDeps(event, { appRoot, projectId, requirementsContent });
+    },
+  );
 
   ipcMain.handle("project-deps-diff", async (event, { projectId }) => {
     return diffRequirements(event, { appRoot, projectId });
@@ -326,11 +401,14 @@ const registerProjectDepsHandlers = ({ appRoot }) => {
     return listProfiles(event, { appRoot });
   });
 
-  ipcMain.handle("project-deps-delete-profile", async (event, { projectId }) => {
-    return deleteProfile(event, { appRoot, projectId });
-  });
+  ipcMain.handle(
+    "project-deps-delete-profile",
+    async (event, { projectId }) => {
+      return deleteProfile(event, { appRoot, projectId });
+    },
+  );
 
   logger.info("Project dependency profile IPC handlers registered");
 };
 
-module.exports = { registerProjectDepsHandlers };
+module.exports = { registerProjectDepsHandlers, sanitizeProjectId };

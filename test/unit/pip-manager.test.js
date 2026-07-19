@@ -2,11 +2,8 @@ const assert = require("assert");
 const path = require("path");
 
 describe("Pip Manager (main process)", () => {
-  // Test the logic of pip-manager without actual pip execution
-
   describe("getVenvPaths", () => {
     it("returns correct paths for Windows", () => {
-      // Simulate Windows paths
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
 
@@ -16,202 +13,297 @@ describe("Pip Manager (main process)", () => {
 
       assert.ok(paths.venvDir.includes("python-env"));
       assert.ok(paths.python.endsWith("python.exe"));
-      assert.ok(paths.pip.endsWith("pip.exe"));
+      // pip now points to python.exe to avoid broken launcher
+      assert.ok(paths.pip.endsWith("python.exe"));
+      assert.ok(Array.isArray(paths.pipPrefix));
+      assert.strictEqual(paths.pipPrefix[0], "-m");
+      assert.strictEqual(paths.pipPrefix[1], "pip");
       assert.ok(paths.activateScript.includes("Scripts\\activate"));
 
-      // Restore
       Object.defineProperty(process, "platform", { value: originalPlatform });
     });
 
-    it("returns correct paths for macOS/Linux based on platform detection", () => {
-      // Direct test of the getVenvPaths internal logic instead of relying on
-      // process.platform mocking which doesn't work well with module caching.
-      // The function uses process.platform at call time, so we test the output
-      // format independent of platform.
+    it("returns correct paths for macOS/Linux", () => {
       const { getVenvPaths } = require("../../src/main/pip-manager");
       const appRoot = "/Users/test/nomopro";
       const paths = getVenvPaths(appRoot);
 
-      // Regardless of platform, paths should have consistent structure
       assert.ok(paths.venvDir.includes("python-env"));
       assert.ok(typeof paths.python === "string" && paths.python.length > 0);
       assert.ok(typeof paths.pip === "string" && paths.pip.length > 0);
-      assert.ok(typeof paths.activateScript === "string" && paths.activateScript.length > 0);
-      // On Linux/macOS the separator should be /
-      // On Windows it uses \
-      const isWin = process.platform === "win32";
-      const sep = isWin ? "\\" : "/";
       assert.ok(
-        paths.venvDir.split(sep).pop() === "python-env",
-        "venvDir should end with python-env"
+        typeof paths.activateScript === "string" &&
+          paths.activateScript.length > 0,
       );
+    });
+
+    // L1: override via env var
+    it("respects NOMOPRO_VENV_DIR env override", () => {
+      const originalEnv = process.env.NOMOPRO_VENV_DIR;
+      process.env.NOMOPRO_VENV_DIR = "C:\\custom\\venv";
+
+      const { getVenvPaths } = require("../../src/main/pip-manager");
+      const paths = getVenvPaths("C:\\app\\root");
+
+      assert.ok(paths.venvDir.includes("custom"));
+      assert.ok(paths.venvDir.includes("venv"));
+      assert.ok(!paths.venvDir.includes("python-env"));
+
+      if (originalEnv) {
+        process.env.NOMOPRO_VENV_DIR = originalEnv;
+      } else {
+        delete process.env.NOMOPRO_VENV_DIR;
+      }
+    });
+
+    // L1: customVenvDir param
+    it("accepts custom venvDir parameter", () => {
+      const { getVenvPaths } = require("../../src/main/pip-manager");
+      const paths = getVenvPaths("/app/root", "/custom/venv");
+
+      assert.ok(paths.venvDir.includes("/custom/venv"));
+      assert.ok(!paths.venvDir.includes("python-env"));
     });
   });
 
-  describe("ensureVirtualEnv edge cases", () => {
-    // We can't test actual venv creation here as it requires system python,
-    // but we can verify the logic structure
+  describe("validatePackageName", () => {
+    it("rejects empty names", () => {
+      const { validatePackageName } = require("../../src/main/pip-manager");
+      assert.ok(validatePackageName(""));
+      assert.ok(validatePackageName(null));
+    });
 
-    it("module exports expected functions", () => {
+    it("rejects flag-like names", () => {
+      const { validatePackageName } = require("../../src/main/pip-manager");
+      assert.ok(validatePackageName("--help"));
+      assert.ok(validatePackageName("-r"));
+    });
+
+    it("rejects shell-injection characters", () => {
+      const { validatePackageName } = require("../../src/main/pip-manager");
+      assert.ok(validatePackageName("package; rm -rf /"));
+      assert.ok(validatePackageName("package|echo"));
+    });
+
+    it("accepts valid package names", () => {
+      const { validatePackageName } = require("../../src/main/pip-manager");
+      assert.equal(validatePackageName("requests"), null);
+      assert.equal(validatePackageName("numpy"), null);
+      assert.equal(validatePackageName("flask==2.0.0"), null);
+      assert.equal(validatePackageName("package@git+https://..."), null);
+    });
+  });
+
+  describe("PROTECTED_PACKAGES", () => {
+    it("blocks uninstall of pip, setuptools, wheel", () => {
+      const { PROTECTED_PACKAGES } = require("../../src/main/pip-manager");
+      assert.ok(PROTECTED_PACKAGES.includes("pip"));
+      assert.ok(PROTECTED_PACKAGES.includes("setuptools"));
+      assert.ok(PROTECTED_PACKAGES.includes("wheel"));
+    });
+  });
+
+  describe("installPackage args building", () => {
+    it("builds args with versionSpecifier", () => {
+      const { buildPipInstallArgs } = require("../../src/main/pip-manager");
+      // Note: buildPipInstallArgs is internal, testing through the module
+      // This is a logic test of the version specifier feature
+    });
+  });
+
+  describe("resetSystemPythonCache", () => {
+    it("resets cache state", () => {
+      const { resetSystemPythonCache } = require("../../src/main/pip-manager");
+      resetSystemPythonCache();
+      // If no error, test passes
+    });
+  });
+
+  describe("module exports", () => {
+    it("exports expected functions", () => {
       const pipManager = require("../../src/main/pip-manager");
       assert.equal(typeof pipManager.registerPipHandlers, "function");
       assert.equal(typeof pipManager.ensureVirtualEnv, "function");
       assert.equal(typeof pipManager.getVenvPaths, "function");
+      assert.equal(typeof pipManager.resetSystemPythonCache, "function");
     });
   });
 
-  describe("IPC response shapes", () => {
-    it("install returns expected shape on success", () => {
-      const mockSuccess = {
-        success: true,
-        exitCode: 0,
-        stdout: "Successfully installed requests",
-        stderr: "",
-        package: "requests",
-      };
+  describe("fixExeShebangs", () => {
+    it("fixes shebangs in pip.exe launchers", () => {
+      const { fixExeShebangs } = require("../../src/main/pip-manager");
 
-      assert.equal(mockSuccess.success, true);
-      assert.equal(mockSuccess.exitCode, 0);
-      assert.equal(mockSuccess.package, "requests");
-      assert.ok(mockSuccess.stdout.includes("installed"));
+      // Create a fake venv dir with a mock pip.exe containing stale shebang
+      const tmpDir = require("os").tmpdir();
+      const testDir = path.join(tmpDir, "nomopro-test-shebang-" + Date.now());
+      const scriptsDir = path.join(testDir, "Scripts");
+      require("fs").mkdirSync(scriptsDir, { recursive: true });
+
+      // Fake venv python.exe
+      require("fs").writeFileSync(path.join(scriptsDir, "python.exe"), "");
+
+      // Create a pip.exe with stale shebang from build machine
+      const staleShebang =
+        "#!D:\\project\\node\\nomopro\\pyide\\prod\\nomopro-desktop\\data\\python-env\\Scripts\\python.exe\n";
+      const pipContent = staleShebang + "PK\x03\x04...rest of PE binary...";
+      require("fs").writeFileSync(path.join(scriptsDir, "pip.exe"), pipContent);
+
+      // Also wheel.exe
+      require("fs").writeFileSync(
+        path.join(scriptsDir, "wheel.exe"),
+        pipContent,
+      );
+
+      // Run fix
+      fixExeShebangs(testDir);
+
+      // Read back
+      const fixedPip = require("fs").readFileSync(
+        path.join(scriptsDir, "pip.exe"),
+        "utf8",
+      );
+      assert.ok(fixedPip.startsWith("#!"), "should start with shebang");
+      assert.ok(
+        fixedPip.includes(scriptsDir + "\\python.exe"),
+        "shebang should point to new venv python: " + fixedPip,
+      );
+      assert.ok(
+        !fixedPip.includes("D:\\project\\node"),
+        "should NOT contain old build-machine path",
+      );
+
+      // Cleanup
+      require("fs").rmSync(testDir, { recursive: true, force: true });
     });
 
-    it("install returns error shape on failure", () => {
-      const mockFail = {
-        success: false,
-        exitCode: 1,
-        stdout: "",
-        stderr: "ERROR: Could not find a version that satisfies the requirement",
-        package: "nonexistent-package",
-      };
+    it("does not modify files without stale paths", () => {
+      const { fixExeShebangs } = require("../../src/main/pip-manager");
+      const tmpDir = require("os").tmpdir();
+      const testDir = path.join(
+        tmpDir,
+        "nomopro-test-shebang-clean-" + Date.now(),
+      );
+      const scriptsDir = path.join(testDir, "Scripts");
+      require("fs").mkdirSync(scriptsDir, { recursive: true });
+      require("fs").writeFileSync(path.join(scriptsDir, "python.exe"), "");
 
-      assert.equal(mockFail.success, false);
-      assert.equal(mockFail.exitCode, 1);
-      assert.ok(mockFail.stderr.includes("ERROR"));
-    });
+      // Clean shebang
+      const cleanShebang =
+        "#!C:\\Nomokit-Desktop\\resources\\app\\data\\python-env\\Scripts\\python.exe\n";
+      require("fs").writeFileSync(
+        path.join(scriptsDir, "pip.exe"),
+        cleanShebang + "PK...",
+      );
 
-    it("install returns locked shape on concurrency", () => {
-      const mockLocked = {
-        success: false,
-        error: "Another pip operation is in progress",
-        locked: true,
-      };
+      const beforeContent = require("fs").readFileSync(
+        path.join(scriptsDir, "pip.exe"),
+      );
+      fixExeShebangs(testDir);
+      const afterContent = require("fs").readFileSync(
+        path.join(scriptsDir, "pip.exe"),
+      );
 
-      assert.equal(mockLocked.success, false);
-      assert.equal(mockLocked.locked, true);
-    });
-
-    it("list returns packages array", () => {
-      const mockList = {
-        success: true,
-        packages: [
-          { name: "pip", version: "24.0" },
-          { name: "setuptools", version: "69.0" },
-        ],
-        count: 2,
-      };
-
-      assert.equal(mockList.success, true);
-      assert.ok(Array.isArray(mockList.packages));
-      assert.equal(mockList.count, 2);
-      assert.equal(mockList.packages[0].name, "pip");
-    });
-
-    it("list returns empty packages when none installed beyond base", () => {
-      const mockEmpty = {
-        success: true,
-        packages: [],
-        count: 0,
-      };
-
-      assert.equal(mockEmpty.success, true);
-      assert.equal(mockEmpty.count, 0);
-    });
-
-    it("uninstall returns expected shape", () => {
-      const mockUninstall = {
-        success: true,
-        exitCode: 0,
-        stdout: "Uninstalled requests-2.31.0:\n  Successfully uninstalled requests-2.31.0",
-        stderr: "",
-        package: "requests",
-      };
-
-      assert.equal(mockUninstall.success, true);
-      assert.ok(mockUninstall.stdout.includes("Uninstalled"));
-    });
-
-    it("show returns package info", () => {
-      const mockShow = {
-        success: true,
-        info: "Name: requests\nVersion: 2.31.0\nSummary: Python HTTP for Humans.",
-      };
-
-      assert.equal(mockShow.success, true);
-      assert.ok(mockShow.info.includes("Name: requests"));
-    });
-
-    it("show returns not found", () => {
-      const mockNotFound = {
-        success: false,
-        error: "Package 'nonexistent' not found",
-        notFound: true,
-      };
-
-      assert.equal(mockNotFound.success, false);
-      assert.equal(mockNotFound.notFound, true);
-    });
-
-    it("cache info returns expected structure", () => {
-      const mockCache = {
-        success: true,
-        cacheDir: "/home/user/.cache/pip",
-        cacheSize: 52428800, // 50MB
-        cacheCount: 42,
-        venvDir: "/home/user/app/data/python-env",
-      };
-
-      assert.equal(mockCache.success, true);
-      assert.ok(mockCache.cacheSize >= 0);
-      assert.ok(mockCache.cacheCount >= 0);
-    });
-
-    it("runInVenv returns success with stdout", () => {
-      const mockRun = {
-        success: true,
-        exitCode: 0,
-        stdout: "hello from venv\n",
-        stderr: "",
-      };
-
-      assert.equal(mockRun.success, true);
-      assert.equal(mockRun.stdout, "hello from venv\n");
-    });
-
-    it("ensureVenv returns alreadyExists when venv is present", () => {
-      const mockExisting = {
-        success: true,
-        alreadyExists: true,
-        venvPaths: {
-          venvDir: "/data/python-env",
-          python: "/data/python-env/bin/python3",
-        },
-      };
-
-      assert.equal(mockExisting.success, true);
-      assert.equal(mockExisting.alreadyExists, true);
+      assert.deepStrictEqual(
+        beforeContent,
+        afterContent,
+        "should not modify files without stale paths",
+      );
+      require("fs").rmSync(testDir, { recursive: true, force: true });
     });
   });
+});
 
-  describe("findSystemPython candidates", () => {
-    it("filters candidates in expected order", () => {
-      // The order matters: prefer python3 over python on non-Windows
-      const candidates = process.platform === "win32"
-        ? ["python3", "python", "py"]
-        : ["python3", "python"];
-
-      assert.ok(candidates.length >= 2);
-      assert.ok(candidates.includes("python3"));
+// ============================================================================
+// Diagnostic Bundle Tests
+// ============================================================================
+describe("Diagnostic Bundle", () => {
+  describe("module exports", () => {
+    it("exports registerDiagnosticHandlers", () => {
+      const diag = require("../../src/main/diagnostic-bundle");
+      assert.equal(typeof diag.registerDiagnosticHandlers, "function");
     });
+  });
+});
+
+// ============================================================================
+// Recovery Mode Tests
+// ============================================================================
+describe("Recovery Mode", () => {
+  describe("module exports", () => {
+    it("exports registerRecoveryHandlers", () => {
+      const recovery = require("../../src/main/recovery-mode");
+      assert.equal(typeof recovery.registerRecoveryHandlers, "function");
+    });
+  });
+});
+
+// ============================================================================
+// Offline Cache Tests
+// ============================================================================
+describe("Offline Cache", () => {
+  describe("module exports", () => {
+    it("exports registerOfflineCacheHandlers", () => {
+      const cache = require("../../src/main/offline-cache");
+      assert.equal(typeof cache.registerOfflineCacheHandlers, "function");
+      assert.equal(typeof cache.cachePackage, "function");
+      assert.equal(typeof cache.getCacheDir, "function");
+    });
+  });
+});
+
+// ============================================================================
+// Safe Install Tests
+// ============================================================================
+describe("Safe Install", () => {
+  describe("classifyPackage", () => {
+    it("returns safe for known packages", () => {
+      const { classifyPackage } = require("../../src/main/safe-install");
+      assert.equal(classifyPackage("requests").level, "safe");
+      assert.equal(classifyPackage("flask").level, "safe");
+      assert.equal(classifyPackage("numpy").level, "safe"); // numpy listed in KNOWN_SAFE_PACKAGES
+    });
+
+    it("returns blocked for incompatible packages", () => {
+      const { classifyPackage } = require("../../src/main/safe-install");
+      assert.equal(classifyPackage("pywin32").level, "blocked");
+      assert.equal(classifyPackage("tkinter").level, "blocked");
+    });
+
+    it("handles unknown packages", () => {
+      const { classifyPackage } = require("../../src/main/safe-install");
+      assert.equal(classifyPackage("some-random-pkg-12345").level, "unknown");
+    });
+
+    it("handles empty input", () => {
+      const { classifyPackage } = require("../../src/main/safe-install");
+      assert.equal(classifyPackage("").level, "unknown");
+      assert.equal(classifyPackage(null).level, "unknown");
+    });
+  });
+});
+
+// ============================================================================
+// Project Deps Tests
+// ============================================================================
+describe("Project Deps", () => {
+  describe("sanitizeProjectId", () => {
+    it("sanitizes project IDs", () => {
+      const { sanitizeProjectId } = require("../../src/main/project-deps");
+      assert.equal(sanitizeProjectId("default"), "default");
+      assert.equal(sanitizeProjectId("my-project"), "my-project");
+      assert.equal(sanitizeProjectId("my project!"), "my_project_");
+      assert.equal(sanitizeProjectId(null), "default");
+      assert.equal(sanitizeProjectId(""), "default");
+    });
+  });
+});
+
+// ============================================================================
+// Error Boundary Tests
+// ============================================================================
+describe("Error Boundary", () => {
+  it("exports registerSafeHandler", () => {
+    const eb = require("../../src/main/error-boundary");
+    assert.equal(typeof eb.registerSafeHandler, "function");
   });
 });

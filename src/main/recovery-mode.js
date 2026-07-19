@@ -15,10 +15,24 @@ const { ipcMain } = require("electron");
 const { walkDirSize, copyRecursive } = require("./utils");
 
 /**
+ * Resolve bundled Python directory.
+ * Packaged app → process.resourcesPath/python/
+ * Dev/unpacked → appRoot/python/
+ */
+const getBundledPythonDir = (appRoot) => {
+  const { app } = require("electron");
+  if (app.isPackaged) {
+    const resourcesDir = path.join(process.resourcesPath, "python");
+    if (fs.existsSync(resourcesDir)) return resourcesDir;
+  }
+  return path.join(appRoot, "python");
+};
+
+/**
  * Verify bundled Python runtime integrity
  */
 const verifyBundledPython = async (event, { appRoot }) => {
-  const pythonDir = path.join(appRoot, "python");
+  const pythonDir = getBundledPythonDir(appRoot);
   const result = {
     exists: fs.existsSync(pythonDir),
     pythonExe: false,
@@ -60,11 +74,15 @@ const verifyBundledPython = async (event, { appRoot }) => {
         if (res.status === 0) {
           result.pythonVersion = (res.stdout || res.stderr || "").trim();
         } else {
-          result.issues.push(`Python executable at ${exePath} exists but fails to run`);
+          result.issues.push(
+            `Python executable at ${exePath} exists but fails to run`,
+          );
           result.corrupt = true;
         }
       } catch (e) {
-        result.issues.push(`Python executable at ${exePath} exists but cannot be executed: ${e.message}`);
+        result.issues.push(
+          `Python executable at ${exePath} exists but cannot be executed: ${e.message}`,
+        );
         result.corrupt = true;
       }
       break;
@@ -76,9 +94,9 @@ const verifyBundledPython = async (event, { appRoot }) => {
     result.corrupt = true;
   }
 
-  // Check for essential files
+  // Check for essential files (.pth checked separately — embeddable may rename ._pth → .pth)
   const checkFiles = isWin
-    ? ["python.exe", "python3.dll", "python311.dll", "python._pth"]
+    ? ["python.exe", "python3.dll", "python311.dll"]
     : ["bin/python3", "lib/python3.11"];
 
   for (const reqFile of checkFiles) {
@@ -88,15 +106,35 @@ const verifyBundledPython = async (event, { appRoot }) => {
     }
   }
 
+  // Check for .pth file — embeddable Python may rename python._pth → python.pth after bootstrap
+  if (isWin) {
+    const pthVariants = [
+      "python._pth",
+      "python.pth",
+      "python311._pth",
+      "python311.pth",
+    ];
+    const foundPth = pthVariants.some((variant) =>
+      fs.existsSync(path.join(pythonDir, variant)),
+    );
+    if (!foundPth) {
+      result.issues.push(
+        "Required .pth file missing (check python._pth / python.pth)",
+      );
+    }
+  }
+
   // Check size of bundled directory
   try {
     const { size: totalSize, count: fileCount } = walkDirSize(pythonDir);
     result.totalSize = totalSize;
-    result.totalSizeMB = Math.round(totalSize / 1024 / 1024 * 100) / 100;
+    result.totalSizeMB = Math.round((totalSize / 1024 / 1024) * 100) / 100;
     result.fileCount = fileCount;
 
     if (totalSize < 1024 * 1024) {
-      result.issues.push(`Bundled Python size (${result.totalSizeMB} MB) seems too small, may be incomplete`);
+      result.issues.push(
+        `Bundled Python size (${result.totalSizeMB} MB) seems too small, may be incomplete`,
+      );
       result.corrupt = true;
     }
   } catch (e) {
@@ -114,10 +152,14 @@ const verifyBundledPython = async (event, { appRoot }) => {
  * Re-extract / restore bundled Python from recovery backup
  */
 const restoreBundledPython = async (event, { appRoot }) => {
-  const pythonDir = path.join(appRoot, "python");
+  const pythonDir = getBundledPythonDir(appRoot);
   const backupDir = path.join(appRoot, "python-backup");
-  const markerFile = path.join(appRoot, "python", ".installed");
-  const installScript = path.join(appRoot, "scripts", "install_python_payload.js");
+  const markerFile = path.join(pythonDir, ".installed");
+  const installScript = path.join(
+    appRoot,
+    "scripts",
+    "install_python_payload.js",
+  );
 
   // Check if we have a backup we can restore from
   if (fs.existsSync(backupDir)) {
@@ -130,23 +172,53 @@ const restoreBundledPython = async (event, { appRoot }) => {
       logger.info("Python runtime restored from backup");
       return { success: true, restoredFrom: "backup" };
     } catch (e) {
-      return { success: false, error: `Failed to restore from backup: ${e.message}` };
+      return {
+        success: false,
+        error: `Failed to restore from backup: ${e.message}`,
+      };
     }
   }
 
-  // No backup, check if install script exists to re-download
+  // No backup — auto-download Python payload using install script
   if (fs.existsSync(installScript)) {
-    return {
-      success: false,
-      error: "No backup available. Please re-download Python runtime",
-      requiresRedownload: true,
-      installCommand: `node "${installScript}"`,
-    };
+    try {
+      // Remove corrupted python dir first
+      if (fs.existsSync(pythonDir)) {
+        fs.rmSync(pythonDir, { recursive: true, force: true });
+      }
+      // Run install_python_payload.js synchronously via child_process
+      const installResult = spawnSync(process.execPath, [installScript], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 120000,
+        cwd: appRoot,
+      });
+      if (installResult.status === 0) {
+        logger.info(
+          "Python runtime downloaded and installed successfully via recovery",
+        );
+        return { success: true, restoredFrom: "auto-download" };
+      }
+      return {
+        success: false,
+        error: `Auto-install failed (exit code ${installResult.status}): ${(installResult.stderr || installResult.stdout || "unknown").trim()}`,
+        requiresRedownload: true,
+        installCommand: `node "${installScript}"`,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        error: `Auto-install error: ${e.message}`,
+        requiresRedownload: true,
+        installCommand: `node "${installScript}"`,
+      };
+    }
   }
 
   return {
     success: false,
-    error: "No Python runtime found and no recovery method available. Please reinstall the application.",
+    error:
+      "No Python runtime found and no recovery method available. Please reinstall the application.",
     requiresReinstall: true,
   };
 };
@@ -155,7 +227,7 @@ const restoreBundledPython = async (event, { appRoot }) => {
  * Create a backup of bundled Python for recovery
  */
 const createBackup = async (event, { appRoot }) => {
-  const pythonDir = path.join(appRoot, "python");
+  const pythonDir = getBundledPythonDir(appRoot);
   const backupDir = path.join(appRoot, "python-backup");
 
   if (!fs.existsSync(pythonDir)) {
@@ -173,12 +245,14 @@ const createBackup = async (event, { appRoot }) => {
     // Check backup size
     const { size } = walkDirSize(backupDir);
 
-    logger.info(`Python backup created at ${backupDir} (${Math.round(size / 1024 / 1024)} MB)`);
+    logger.info(
+      `Python backup created at ${backupDir} (${Math.round(size / 1024 / 1024)} MB)`,
+    );
     return {
       success: true,
       backupPath: backupDir,
       size: size,
-      sizeMB: Math.round(size / 1024 / 1024 * 100) / 100,
+      sizeMB: Math.round((size / 1024 / 1024) * 100) / 100,
     };
   } catch (e) {
     return { success: false, error: `Backup failed: ${e.message}` };
@@ -194,9 +268,20 @@ const verifyShortcuts = async (event) => {
   if (process.platform === "win32") {
     // Check common installation paths
     const commonPaths = [
-      path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Nomopro-Desktop.lnk"),
+      path.join(
+        process.env.APPDATA || "",
+        "Microsoft",
+        "Windows",
+        "Start Menu",
+        "Programs",
+        "Nomopro-Desktop.lnk",
+      ),
       path.join(process.env.PUBLIC || "", "Desktop", "Nomopro-Desktop.lnk"),
-      path.join(process.env.USERPROFILE || "", "Desktop", "Nomopro-Desktop.lnk"),
+      path.join(
+        process.env.USERPROFILE || "",
+        "Desktop",
+        "Nomopro-Desktop.lnk",
+      ),
     ];
 
     for (const shortcut of commonPaths) {
