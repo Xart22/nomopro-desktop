@@ -216,10 +216,13 @@ app.on("ready", async () => {
         yes: 0,
         no: 1,
       })
-      .then((result) => {
+      .then(async (result) => {
         if (result.response === 0) {
-          cleanupBeforeInstallUpdate();
+          await cleanupBeforeInstallUpdate();
           // Let electron-updater control shutdown and installer handoff.
+          if (win) {
+            win.destroy(); // Menutup window seketika tanpa memicu event pencegahan (preventDefault)
+          }
           autoUpdater.quitAndInstall(false, false);
         }
       })
@@ -279,7 +282,7 @@ const killCurrentPython = () => {
   }
 };
 
-const cleanupBeforeInstallUpdate = () => {
+const cleanupBeforeInstallUpdate = async () => {
   isInstallingUpdate = true;
 
   // Notify guarded update windows to bypass close prevention logic.

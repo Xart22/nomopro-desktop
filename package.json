@@ -81,7 +81,8 @@
       "runAfterFinish": true,
       "allowToChangeInstallationDirectory": false,
       "perMachine": false,
-      "include": "build/installer.nsh"
+      "include": "build/installer.nsh",
+      "killProcessesAutomatically": true
     },
     "extraResources": [
       {

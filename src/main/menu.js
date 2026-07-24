@@ -62,7 +62,7 @@ function showInstalledCores(appRoot) {
     });
     return;
   }
-  const list = cores.map((c) => `  - ${c.name ?? c.id} (${c.installed})`).join("\n");
+  const list = cores.map((c) => `  - ${c.name ?? c.id}`).join("\n");
   dialog.showMessageBox(win, {
     type: "info",
     title: "Installed Boards",
@@ -75,7 +75,10 @@ function setMenu({ win, appRoot, app }) {
   let version = {};
   try {
     localLib = JSON.parse(
-      fs.readFileSync(path.join(appRoot, "src/link/tools/localLib.json"), "utf8"),
+      fs.readFileSync(
+        path.join(appRoot, "src/link/tools/localLib.json"),
+        "utf8",
+      ),
     );
   } catch (e) {
     logger.warn("Failed to read localLib.json: " + e.message);
