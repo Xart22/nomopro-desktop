@@ -1,4 +1,4 @@
-const { BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 
 function showArduinoUpdateWindow({ emitter } = {}) {
@@ -19,8 +19,11 @@ function showArduinoUpdateWindow({ emitter } = {}) {
     },
   });
 
-  updateWin.loadFile(path.join(__dirname, "../update/arduino-update.html"))
-    .catch((err) => console.error("Arduino update window loadFile error:", err));
+  updateWin
+    .loadFile(path.join(__dirname, "../update/arduino-update.html"))
+    .catch((err) =>
+      console.error("Arduino update window loadFile error:", err),
+    );
 
   // Buffer IPC messages until the page finishes loading (preload not yet ready)
   const pending = [];
@@ -47,7 +50,7 @@ function showArduinoUpdateWindow({ emitter } = {}) {
   emitter.on("start", () => send({ status: "start" }));
 
   emitter.on("progress", (data) =>
-    send({ status: "line", message: data.message })
+    send({ status: "line", message: data.message }),
   );
 
   emitter.on("complete", () => {
@@ -65,6 +68,17 @@ function showArduinoUpdateWindow({ emitter } = {}) {
 
   updateWin.on("close", (e) => {
     if (!canClose) e.preventDefault();
+  });
+
+  const forceClose = () => {
+    canClose = true;
+    if (!updateWin.isDestroyed()) updateWin.destroy();
+  };
+
+  app.once("nomokit-force-close-update-windows", forceClose);
+
+  updateWin.on("closed", () => {
+    app.removeListener("nomokit-force-close-update-windows", forceClose);
   });
 
   ipcMain.once("arduino-update-close", () => {

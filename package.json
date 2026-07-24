@@ -1,6 +1,6 @@
 {
   "name": "nomokit-desktop",
-  "version": "3.0.5",
+  "version": "3.0.7",
   "main": "main.js",
   "scripts": {
     "test": "node test/run-tests.js && node test/e2e/e2e-test-matrix.js",
@@ -52,7 +52,7 @@
         "nsis"
       ],
       "icon": "src/assets/img/nomokit.png",
-      "requestedExecutionLevel": "requireAdministrator"
+      "requestedExecutionLevel": "asInvoker"
     },
     "mac": {
       "category": "public.app-category.education",

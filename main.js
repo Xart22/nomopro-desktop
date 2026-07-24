@@ -10,6 +10,7 @@ autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = false;
 let win;
 let socket = null;
+let isInstallingUpdate = false;
 let token = {};
 try {
   token = JSON.parse(
@@ -147,6 +148,8 @@ const createWindow = () => {
   registerRecoveryHandlers({ appRoot });
   initSocket({ socket, appRoot, win });
 
+  // Set application menu (must be called after window is ready)
+  _setMenu({ win, appRoot, app });
   //  START: Link server
   const { startLink: _startLink } = require("./src/main/link");
   link = _startLink({ win });
@@ -215,8 +218,9 @@ app.on("ready", async () => {
       })
       .then((result) => {
         if (result.response === 0) {
+          cleanupBeforeInstallUpdate();
+          // Let electron-updater control shutdown and installer handoff.
           autoUpdater.quitAndInstall(false, false);
-          app.quit();
         }
       })
       .catch((err) => logger.warn("Update dialog error: " + err.message));
@@ -243,10 +247,11 @@ app.on("window-all-closed", () => {
   app.quit();
 });
 
-const setMenu = () => _setMenu({ win, appRoot, app });
-
 app.on("before-quit", () => {
-  // cleanup handled by window-all-closed
+  // Allow guarded windows to close when app is quitting for update install.
+  if (isInstallingUpdate) {
+    app.emit("nomokit-force-close-update-windows");
+  }
 });
 
 // ipc handlers and socket listeners are registered by modules in createWindow
@@ -271,6 +276,53 @@ const killCurrentPython = () => {
       logger.warn("Failed to kill existing python process");
     }
     currentPythonProc = null;
+  }
+};
+
+const cleanupBeforeInstallUpdate = () => {
+  isInstallingUpdate = true;
+
+  // Notify guarded update windows to bypass close prevention logic.
+  app.emit("nomokit-force-close-update-windows");
+
+  // Stop socket reconnection loops during shutdown.
+  try {
+    if (socket) {
+      socket.removeAllListeners();
+      socket.disconnect();
+    }
+  } catch (e) {
+    logger.warn("Update cleanup socket error: " + e.message);
+  }
+
+  // Stop link server if active.
+  try {
+    if (link && typeof link.close === "function") {
+      link.close();
+    }
+  } catch (e) {
+    logger.warn("Update cleanup link error: " + e.message);
+  }
+
+  // Kill active python task if any.
+  try {
+    killCurrentPython();
+  } catch (e) {
+    logger.warn("Update cleanup python error: " + e.message);
+  }
+
+  // Force close all windows to avoid close guards blocking updater.
+  try {
+    BrowserWindow.getAllWindows().forEach((w) => {
+      try {
+        w.removeAllListeners("close");
+        w.destroy();
+      } catch (_) {
+        // ignore per-window errors
+      }
+    });
+  } catch (e) {
+    logger.warn("Update cleanup window error: " + e.message);
   }
 };
 
@@ -540,6 +592,37 @@ ipcMain.handle("get-python-candidates", async () => {
 
 // ---- MicroPython Upload & Flash IPC ----
 const MicroPython = require("./src/link/src/upload/micropython");
+const portLock = require("./src/link/src/lib/port-lock");
+const traceLog = require("./src/link/src/lib/trace-log");
+const IPC_LOCK_OWNER = "ipc-handler";
+
+const _assertPortFree = (portPath) => {
+  const holder = portLock.whoHolds(portPath);
+  if (holder && holder !== IPC_LOCK_OWNER) {
+    throw new Error(
+      `Port ${portPath} is currently connected/in use elsewhere (e.g. live serial monitor). Please disconnect it in the app before uploading or flashing.`,
+    );
+  }
+};
+
+// Rate-limit our OWN attempts to open a given port, no matter how fast the
+// renderer calls us. This is a defensive measure: repeatedly hammering
+// SerialPort.open() on a port that's already open elsewhere (hundreds of
+// times per minute, as observed in trace logs) is exactly the kind of
+// handle churn that can destabilize a flaky USB-serial kernel driver, even
+// though each individual failed attempt looks harmless on its own.
+const _lastAttempt = new Map(); // normalizedPort -> timestamp
+const MIN_INTERVAL_MS = 1000;
+const _shouldThrottle = (portPath) => {
+  const key = String(portPath || "").toUpperCase();
+  const now = Date.now();
+  const last = _lastAttempt.get(key) || 0;
+  if (now - last < MIN_INTERVAL_MS) {
+    return true;
+  }
+  _lastAttempt.set(key, now);
+  return false;
+};
 
 /**
  * Resolve tools and userData paths from the link server if available.
@@ -570,27 +653,35 @@ ipcMain.handle(
 
     const config = { board: board || "esp32", firmwareUrl, flashOffset };
 
-    const mp = new MicroPython(
-      normalizedPort,
-      config,
-      userDataPath,
-      toolsPath,
-      (msg) => {
-        if (win && win.webContents) {
-          win.webContents.send("micropython-flash-progress", { text: msg });
-        }
-      },
-    );
+    _assertPortFree(normalizedPort);
+    portLock.acquire(normalizedPort, IPC_LOCK_OWNER);
+    try {
+      const mp = new MicroPython(
+        normalizedPort,
+        config,
+        userDataPath,
+        toolsPath,
+        (msg) => {
+          if (win && win.webContents) {
+            win.webContents.send("micropython-flash-progress", { text: msg });
+          }
+        },
+      );
 
-    if (board === "rpi_pico") {
-      const info = MicroPython.FIRMWARE ? MicroPython.FIRMWARE.rpi_pico : null;
-      if (info) mp._config.firmwareInfo = info;
-      await mp.flashPicoUF2();
-    } else {
-      await mp.flashEsp32();
+      if (board === "rpi_pico") {
+        const info = MicroPython.FIRMWARE
+          ? MicroPython.FIRMWARE.rpi_pico
+          : null;
+        if (info) mp._config.firmwareInfo = info;
+        await mp.flashPicoUF2();
+      } else {
+        await mp.flashWithEsptool(board || "esp32");
+      }
+
+      return { success: true };
+    } finally {
+      portLock.release(normalizedPort, IPC_LOCK_OWNER);
     }
-
-    return { success: true };
   },
 );
 
@@ -598,6 +689,10 @@ ipcMain.handle(
   "micropython-upload",
   async (event, { portPath, code, fileName, board, baudRate }) => {
     if (!portPath || !code) throw new Error("portPath and code are required");
+    traceLog.trace(
+      "ipc:micropython-upload",
+      `CALLED portPath=${portPath} bytes=${code.length} board=${board} fileName=${fileName}`,
+    );
     const { toolsPath, userDataPath } = _getMicroPythonConfig();
 
     const config = {
@@ -606,6 +701,61 @@ ipcMain.handle(
       baudRate: baudRate || 115200,
     };
 
+    _assertPortFree(portPath);
+    portLock.acquire(portPath, IPC_LOCK_OWNER);
+    try {
+      const mp = new MicroPython(
+        portPath,
+        config,
+        userDataPath,
+        toolsPath,
+        (msg) => {
+          if (win && win.webContents) {
+            win.webContents.send("micropython-progress", { text: msg });
+          }
+        },
+      );
+
+      const result = await mp.uploadCode(code);
+      return result;
+    } finally {
+      portLock.release(portPath, IPC_LOCK_OWNER);
+    }
+  },
+);
+
+ipcMain.handle("micropython-detect", async (event, { portPath, baudRate }) => {
+  if (!portPath) throw new Error("portPath is required");
+
+  // Already connected live elsewhere (WebSocket session) — don't even try to
+  // open a second handle, just say so immediately. This is what was missing
+  // before: this handler used to attempt SerialPort.open() unconditionally,
+  // and the renderer was calling it in a tight poll loop with no backoff,
+  // producing hundreds of failed opens per minute against the same port
+  // that was already held open — exactly the kind of handle churn that can
+  // destabilize a flaky USB-serial driver over time.
+  const holder = portLock.whoHolds(portPath);
+  if (holder && holder !== IPC_LOCK_OWNER) {
+    return {
+      installed: true,
+      type: "unknown",
+      note: "port already connected via live session",
+    };
+  }
+
+  if (_shouldThrottle(portPath)) {
+    traceLog.trace(
+      "ipc:micropython-detect",
+      `THROTTLED for ${portPath} (called again within ${MIN_INTERVAL_MS}ms)`,
+    );
+    return { installed: false, type: "throttled" };
+  }
+
+  const { toolsPath, userDataPath } = _getMicroPythonConfig();
+
+  const config = { baudRate: baudRate || 115200 };
+  portLock.acquire(portPath, IPC_LOCK_OWNER);
+  try {
     const mp = new MicroPython(
       portPath,
       config,
@@ -618,39 +768,31 @@ ipcMain.handle(
       },
     );
 
-    const result = await mp.uploadCode(code);
-    return result;
-  },
-);
-
-ipcMain.handle("micropython-detect", async (event, { portPath, baudRate }) => {
-  if (!portPath) throw new Error("portPath is required");
-  const { toolsPath, userDataPath } = _getMicroPythonConfig();
-
-  const config = { baudRate: baudRate || 115200 };
-  const mp = new MicroPython(
-    portPath,
-    config,
-    userDataPath,
-    toolsPath,
-    (msg) => {
-      if (win && win.webContents) {
-        win.webContents.send("micropython-progress", { text: msg });
-      }
-    },
-  );
-
-  return await mp.detectFirmware(portPath, baudRate || 115200);
+    return await mp.detectFirmware(portPath, baudRate || 115200);
+  } finally {
+    portLock.release(portPath, IPC_LOCK_OWNER);
+  }
 });
 
 ipcMain.on("micropython-input", (event, { portPath, text }) => {
   if (!portPath || !text) return;
+  if (portLock.whoHolds(portPath) === "websocket-session") {
+    // Live session already owns this port — let it handle input instead of
+    // racing it with a second SerialPort open.
+    return;
+  }
   const { SerialPort: SP } = require("serialport");
   const port = new SP({ path: portPath, baudRate: 115200, autoOpen: false });
+  portLock.acquire(portPath, IPC_LOCK_OWNER);
   port.open((err) => {
-    if (err) return;
+    if (err) {
+      portLock.release(portPath, IPC_LOCK_OWNER);
+      return;
+    }
     port.write(text + "\r\n", () => {});
-    port.drain(() => port.close());
+    port.drain(() =>
+      port.close(() => portLock.release(portPath, IPC_LOCK_OWNER)),
+    );
   });
 });
 

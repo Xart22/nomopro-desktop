@@ -1,5 +1,9 @@
 const { SerialPort } = require("serialport");
 const ansi = require("ansi-string");
+const portLock = require("../lib/port-lock");
+const traceLog = require("../lib/trace-log");
+
+const LOCK_OWNER = "websocket-session";
 
 const Session = require("./session");
 const Arduino = require("../upload/arduino");
@@ -134,6 +138,13 @@ class SerialportSession extends Session {
       if (!peripheral) {
         return reject(new Error(`invalid peripheral ID: ${peripheralId}`));
       }
+      if (!portLock.acquire(peripheral.path, LOCK_OWNER)) {
+        return reject(
+          new Error(
+            `Port ${peripheral.path} is currently busy with another operation (upload/flash in progress). Please wait for it to finish.`,
+          ),
+        );
+      }
       if (this.peripheralsScanorTimer) {
         clearInterval(this.peripheralsScanorTimer);
         this.peripheralsScanorTimer = null;
@@ -157,6 +168,8 @@ class SerialportSession extends Session {
       try {
         port.open((openErr) => {
           if (openErr) {
+            traceLog.trace("ws-connect", `OPEN FAILED for ${peripheral.path}: ${openErr.message}`);
+            portLock.release(peripheral.path, LOCK_OWNER);
             if (isConnectAfterUpload === true) {
               this.sendRemoteRequest("peripheralUnplug", null);
             }
@@ -170,6 +183,8 @@ class SerialportSession extends Session {
 
           port.set({ rts: rts, dtr: dtr }, (setErr) => {
             if (setErr) {
+              traceLog.trace("ws-connect", `SET RTS/DTR FAILED for ${peripheral.path}: ${setErr.message}`);
+              portLock.release(peripheral.path, LOCK_OWNER);
               if (isConnectAfterUpload === true) {
                 this.sendRemoteRequest("peripheralUnplug", null);
               }
@@ -178,6 +193,10 @@ class SerialportSession extends Session {
 
             this.peripheral = port;
             this.peripheralParams = params;
+            traceLog.trace(
+              "ws-connect",
+              `CONNECTED OK path=${peripheral.path} rts=${rts} dtr=${dtr} isConnectAfterUpload=${isConnectAfterUpload}`,
+            );
 
             // Scan COM status prevent device pulled out
             this.connectStateDetectorTimer = setInterval(() => {
@@ -195,6 +214,7 @@ class SerialportSession extends Session {
             });
 
             port.on("error", (error) => {
+              traceLog.trace("ws-connect", `PORT ERROR EVENT: ${error.message}`);
               log(`Port error: ${error.message} | isInDisconnect=${this.isInDisconnect}`);
               if (!this.isInDisconnect) {
                 this.disconnect();
@@ -272,11 +292,21 @@ class SerialportSession extends Session {
         "bytes, encoding:",
         encoding,
       );
+      // Log the actual bytes (not just length) so we can see raw REPL
+      // control sequences (Ctrl+D soft-reset, Ctrl+B, Ctrl+C, etc.) that
+      // the renderer sends directly via this generic write path — these
+      // aren't visible in micropython.js's own trace logging since they
+      // bypass MicroPython class entirely.
+      traceLog.trace(
+        "ws-write",
+        `${buffer.length} bytes, encoding=${encoding}, hex=${buffer.toString("hex").slice(0, 100)}, ascii=${JSON.stringify(buffer.toString("binary").slice(0, 100))}`,
+      );
 
       try {
         if (!this.isInDisconnect) {
           this.peripheral.write(buffer, "binary", (err) => {
             if (err) {
+              traceLog.trace("ws-write", `WRITE ERROR: ${err.message}`);
               console.error("[LINK_SERIAL_WRITE_ERROR]", err.message);
               return reject(
                 new Error(`Error while attempting to write: ${err.message}`),
@@ -295,6 +325,7 @@ class SerialportSession extends Session {
           resolve();
         }
       } catch (err) {
+        traceLog.trace("ws-write", `WRITE EXCEPTION: ${err.message}`);
         console.error("[LINK_SERIAL_WRITE_EXCEPTION]", err.message);
         return reject(err);
       }
@@ -314,11 +345,13 @@ class SerialportSession extends Session {
           this.connectStateDetectorTimer = null;
         }
         const peripheral = this.peripheral;
+        traceLog.trace("ws-disconnect", `closing ${peripheral.path}...`);
         try {
           peripheral.pause();
           // clear all cache data
           peripheral.flush(() => {
             peripheral.close((error) => {
+              portLock.release(peripheral.path, LOCK_OWNER);
               if (error) {
                 this.isInDisconnect = false;
                 return reject(Error(error));
@@ -328,6 +361,7 @@ class SerialportSession extends Session {
             });
           });
         } catch (err) {
+          portLock.release(peripheral.path, LOCK_OWNER);
           this.isInDisconnect = false;
           return reject(err);
         }
@@ -424,9 +458,20 @@ class SerialportSession extends Session {
         );
         try {
           if (config.detectOnly) {
-            // Firmware detection — no disconnect
-            const result = await this.tool.detectFirmware(this.peripheral.path, config.baudRate || 115200);
-            this.sendRemoteRequest("uploadSuccess", { detected: result });
+            // The session's own port (this.peripheral) is already open on
+            // this exact path — probing it again via a brand new SerialPort
+            // is a guaranteed self-conflict (Access denied), not a transient
+            // race. Retrying just triples the useless open attempts against
+            // the driver. If we're connected at all, that already implies
+            // the firmware is responsive — just report success immediately
+            // without touching the port again.
+            traceLog.trace(
+              "ws-upload",
+              `detectOnly requested while already connected on ${this.peripheral.path} — skipping redundant probe`,
+            );
+            this.sendRemoteRequest("uploadSuccess", {
+              detected: { installed: true, type: "unknown", note: "already connected" },
+            });
           } else if (config.flashOnly) {
             // Flash firmware — needs disconnect
             log('Flash starting — blocking detectors');
@@ -477,8 +522,19 @@ class SerialportSession extends Session {
             // All retries failed — send peripheralUnplug so GUI knows
             this.sendRemoteRequest("peripheralUnplug", null);
             throw new Error("Failed to reconnect after flash");
+          } else {
+            // Upload-only: push code via raw REPL through the existing connection
+            // (device already flashed & connected, no disconnect/reconnect needed).
+            this.sendRemoteRequest("setUploadAbortEnabled", true);
+            try {
+              const result = await this.tool.uploadCode(code);
+              this.sendRemoteRequest("setUploadAbortEnabled", false);
+              this.sendRemoteRequest("uploadSuccess", result);
+            } catch (uploadErr) {
+              this.sendRemoteRequest("setUploadAbortEnabled", false);
+              throw uploadErr;
+            }
           }
-          // Upload-only: handled via REPL through existing connection (no disconnect)
         } catch (err) {
           this.sendRemoteRequest("uploadError", {
             message: ansi.red + err.message,
