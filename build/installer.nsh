@@ -4,7 +4,49 @@
 ${StrRep}
 
 !macro preInit
+    ; --- LOGIKA MEMATIKAN APLIKASI LAMA (Dipindahkan ke preInit agar 100% tereksekusi) ---
+    SetDetailsPrint textonly
+    
+    ; Mengecek apakah file .exe utama aplikasi Anda sedang berjalan
+    nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
+    Pop $R0
+    
+    ${If} $R0 == 0
+      DetailPrint `Found running process ${APP_EXECUTABLE_FILENAME}. Attempting force close...`
 
+      StrCpy $R1 0
+      StrCpy $R2 6
+
+      kill_loop:
+        ; Melakukan force-kill beserta seluruh child-process (termasuk Python/Link Server)
+        nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}"`
+        Pop $R3
+        
+        Sleep 2000
+        
+        nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
+        Pop $R0
+        
+        ${If} $R0 != 0
+          DetailPrint `Process closed, continue installation...`
+          Goto check_done
+        ${EndIf}
+
+        IntOp $R1 $R1 + 1
+        ${If} $R1 < $R2
+          DetailPrint `Close attempt $R1/$R2 failed, retrying...`
+          Goto kill_loop
+        ${EndIf}
+
+        DetailPrint `Process still detected after retries. Continue without interactive retry dialog.`
+    ${EndIf}
+
+    check_done:
+    SetDetailsPrint none
+    ; --- AKHIR LOGIKA MEMATIKAN APLIKASI ---
+
+
+    ; --- LOGIKA REGISTRY BAWAAN ANDA ---
     ${If} ${RunningX64}
         SetRegView 64
     ${EndIf}
@@ -30,17 +72,30 @@ done:
     ${If} ${RunningX64}
         SetRegView LastUsed
     ${EndIf}
-
 !macroend
 
 !macro customInstall
     ; Enable long path support for Arduino toolchain (avr-gcc, ld.exe)
     ; Windows 10 1607+ requires this key + longPathAware manifest
     WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
+
+    ; Copy bundled AVR core + tools (avr-gcc, avrdude, etc.) to AppData.
+    ; These persist across app updates. Structure mirrors arduino-cli's package dir.
+    ;
+    ; Source:  $INSTDIR/resources/avr-core/packages/arduino/
+    ; Dest:    %APPDATA%/nomokit-desktop/arduino-data/packages/arduino/
+    ;
+    ; Only copy if not already present (e.g. first install or after clean uninstall).
+    IfFileExists "$APPDATA\nomokit-desktop\arduino-data\packages\arduino\hardware\avr" avr_done 0
+    IfFileExists "$INSTDIR\resources\avr-core\packages\arduino" 0 avr_done
+    CreateDirectory "$APPDATA\nomokit-desktop\arduino-data\packages"
+    CopyFiles /SILENT "$INSTDIR\resources\avr-core\packages\arduino" \
+               "$APPDATA\nomokit-desktop\arduino-data\packages\"
+    DetailPrint "AVR core and tools bundled, copied to AppData."
+    avr_done:
 !macroend
 
 !macro customUnInstall
-
     ${If} ${RunningX64}
         SetRegView 64
     ${EndIf}
@@ -52,35 +107,20 @@ done:
         SetRegView LastUsed
     ${EndIf}
 
-!macroend
+    ; Tanya user: hapus data Arduino (cores, library) atau tidak
+    MessageBox MB_YESNO|MB_ICONQUESTION \
+        "Hapus juga data Arduino (board cores, library) di AppData?$\r$\n\
+         Jika tidak, data akan tetap tersimpan untuk instalasi ulang nanti." \
+        /SD IDNO IDYES delete_arduino_data
+    Goto arduino_done
 
-!macro customCheckAppRunning
-  SetDetailsPrint textonly
-  ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
-  ${if} $R0 == 0
-    DetailPrint `Found running process ${APP_EXECUTABLE_FILENAME}. Attempting force close...`
+    delete_arduino_data:
+        ; Nama folder AppData sesuai package.json name field
+        RMDir /r "$APPDATA\nomokit-desktop\arduino-data"
+        RMDir /r "$APPDATA\nomokit-desktop\libraries"
+        RMDir /r "$APPDATA\nomokit-desktop\library-version.json"
+        RMDir /r "$APPDATA\nomokit-desktop\link-data"
+        DetailPrint "Data Arduino berhasil dihapus."
 
-    StrCpy $R1 0
-    StrCpy $R2 6
-
-    kill_loop:
-      nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}"` $R3
-      Sleep 2000
-      ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
-      ${if} $R0 != 0
-        DetailPrint `Process closed, continue installation...`
-        Goto check_done
-      ${endIf}
-
-      IntOp $R1 $R1 + 1
-      ${if} $R1 < $R2
-        DetailPrint `Close attempt $R1/$R2 failed, retrying...`
-        Goto kill_loop
-      ${endIf}
-
-      DetailPrint `Process still detected after retries. Continue without interactive retry dialog.`
-  ${endIf}
-
-  check_done:
-  SetDetailsPrint none
+    arduino_done:
 !macroend

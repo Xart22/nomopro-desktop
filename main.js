@@ -7,7 +7,7 @@ const { autoUpdater } = require("electron-updater");
 
 autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = false;
+autoUpdater.autoInstallOnAppQuit = true;
 let win;
 let socket = null;
 let isInstallingUpdate = false;
@@ -158,6 +158,20 @@ const syncGui = async (windowUpdate) => _syncGui(win, appRoot, windowUpdate);
 
 const syncLink = async (windowUpdate) => _syncLink(win, appRoot, windowUpdate);
 app.whenReady().then(async () => {
+  const {
+    ensureAppDataDir,
+    migrateArduinoData,
+    ensureArduinoCliConfig,
+  } = require("./src/main/appdata");
+  ensureAppDataDir("arduino-data");
+  ensureAppDataDir("libraries");
+  ensureAppDataDir("local");
+  migrateArduinoData(__dirname);
+  ensureArduinoCliConfig(__dirname);
+
+  // If sync window update is invoked, we need a fresh cli config set after sync
+  // (syncLink is expected to be called after this in the startup sequence)
+
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
@@ -219,11 +233,20 @@ app.on("ready", async () => {
       .then(async (result) => {
         if (result.response === 0) {
           await cleanupBeforeInstallUpdate();
-          // Let electron-updater control shutdown and installer handoff.
-          if (win) {
-            win.destroy(); // Menutup window seketika tanpa memicu event pencegahan (preventDefault)
+          // Grab downloaded installer path from electron-updater.
+          const installerPath = autoUpdater.installerPath;
+          if (installerPath && fs.existsSync(installerPath)) {
+            // Spawn installer visible (no /S). NSIS shows progress UI.
+            // App must fully exit first so NSIS doesn't detect it running.
+            const { spawn } = require("child_process");
+            const child = spawn(installerPath, ["--updated", "--force-run"], {
+              detached: true,
+              stdio: "ignore",
+            });
+            child.unref();
           }
-          autoUpdater.quitAndInstall(false, false);
+          // Force-kill this process so installer can overwrite files.
+          app.exit(0);
         }
       })
       .catch((err) => logger.warn("Update dialog error: " + err.message));

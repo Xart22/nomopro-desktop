@@ -7,6 +7,7 @@ const logger = require("./logger");
 
 const { runArduinoCoreAction } = require("./arduino-updater");
 const { showArduinoUpdateWindow } = require("./arduino-update-window");
+const { getAppDataPath, getLocalLibJsonPath } = require("./appdata");
 
 function getArduinoDir(appRoot) {
   return path.join(appRoot, "src/link/tools/Arduino");
@@ -36,6 +37,10 @@ function getInstalledCores(appRoot) {
   }
 }
 
+/**
+ * Optional cores — user can install/uninstall via menu.
+ * arduino:avr (Uno, Nano, Mega) is bundled with the installer, not listed here.
+ */
 function getAdditionalCores() {
   return [
     { id: "esp32:esp32", label: "ESP32" },
@@ -43,6 +48,21 @@ function getAdditionalCores() {
     { id: "arduino:mbed_nano", label: "Arduino Nano 33 BLE" },
     { id: "arduino:renesas_uno", label: "Arduino Uno R4" },
   ];
+}
+
+/**
+ * Cores that ship bundled with the installer and should be excluded from
+ * the "Install/Uninstall Board" submenus.
+ */
+function getBuiltInCores() {
+  return ["arduino:avr"];
+}
+
+/**
+ * Check if a core is built-in (bundled with installer).
+ */
+function isBuiltInCore(coreId) {
+  return getBuiltInCores().includes(coreId);
 }
 
 function arduinoCoreAction(appRoot, action, coreId) {
@@ -74,12 +94,7 @@ function setMenu({ win, appRoot, app }) {
   let localLib = [];
   let version = {};
   try {
-    localLib = JSON.parse(
-      fs.readFileSync(
-        path.join(appRoot, "src/link/tools/localLib.json"),
-        "utf8",
-      ),
-    );
+    localLib = JSON.parse(fs.readFileSync(getLocalLibJsonPath(), "utf8"));
   } catch (e) {
     logger.warn("Failed to read localLib.json: " + e.message);
   }
@@ -97,13 +112,17 @@ function setMenu({ win, appRoot, app }) {
   const installedCores = getInstalledCores(appRoot);
   const installedIds = installedCores.map((c) => c.id);
 
-  const installSubmenu = getAdditionalCores().map((core) => ({
-    label: `Install ${core.label}`,
-    click: () => arduinoCoreAction(appRoot, "install", core.id),
-  }));
+  // Install submenu: only optional cores (exclude built-in)
+  const installSubmenu = getAdditionalCores()
+    .filter((core) => !isBuiltInCore(core.id))
+    .map((core) => ({
+      label: `Install ${core.label}`,
+      click: () => arduinoCoreAction(appRoot, "install", core.id),
+    }));
 
+  // Uninstall submenu: optional cores that are currently installed
   const uninstallItems = getAdditionalCores()
-    .filter((core) => installedIds.includes(core.id))
+    .filter((core) => installedIds.includes(core.id) && !isBuiltInCore(core.id))
     .map((core) => ({
       label: `Uninstall ${core.label}`,
       click: () => arduinoCoreAction(appRoot, "uninstall", core.id),
@@ -162,6 +181,8 @@ function setMenu({ win, appRoot, app }) {
           click: async () => {
             const { dialog } = require("electron");
             const extract = require("extract-zip");
+            const localDir = getAppDataPath("local");
+            const librariesDir = getAppDataPath("libraries");
             dialog
               .showOpenDialog({
                 properties: ["openFile"],
@@ -171,30 +192,24 @@ function setMenu({ win, appRoot, app }) {
                 if (!res.canceled) {
                   try {
                     await extract(res.filePaths[0], {
-                      dir: path.join(appRoot, "src/link/tools/Arduino/local"),
+                      dir: localDir,
                     });
                     await extract(res.filePaths[0], {
-                      dir: path.join(
-                        appRoot,
-                        "src/link/tools/Arduino/libraries",
-                      ),
+                      dir: librariesDir,
                     });
 
                     const filesName = [];
-                    fs.readdir(
-                      path.join(appRoot, "src/link/tools/Arduino/local"),
-                      (err, files) => {
-                        files.forEach(async (file) => {
-                          if (!file.includes(".txt")) {
-                            filesName.push(file + ".h");
-                          }
-                        });
-                        fs.writeFileSync(
-                          path.join(appRoot, "src/link/tools/localLib.json"),
-                          JSON.stringify(filesName),
-                        );
-                      },
-                    );
+                    fs.readdir(localDir, (err, files) => {
+                      files.forEach(async (file) => {
+                        if (!file.includes(".txt")) {
+                          filesName.push(file + ".h");
+                        }
+                      });
+                      fs.writeFileSync(
+                        getLocalLibJsonPath(),
+                        JSON.stringify(filesName),
+                      );
+                    });
                     dialog.showMessageBox({
                       type: "info",
                       title: "Success",

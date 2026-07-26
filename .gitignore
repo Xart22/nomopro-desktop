@@ -7,3 +7,4 @@ dist/
 .openblockData/
 data/
 python/
+build/avr-core/

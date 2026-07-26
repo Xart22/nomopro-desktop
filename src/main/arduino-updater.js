@@ -2,6 +2,7 @@ const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const logger = require("./logger");
+const { getAppDataPath } = require("./appdata");
 
 /**
  * Check if an Arduino update is needed.
@@ -12,7 +13,7 @@ function checkArduinoUpdateNeeded({ toolsPath } = {}) {
 
   const isWin = process.platform === "win32";
   const arduinoDir = path.join(toolsPath, "Arduino");
-  const updateJsonPath = path.join(arduinoDir, "update.json");
+  const updateJsonPath = getAppDataPath("arduino-update.json");
   const scriptFile = isWin ? "update.bat" : "update.sh";
   const scriptPath = path.join(arduinoDir, scriptFile);
   const shellCmd = isWin ? "cmd.exe" : "/bin/sh";
@@ -27,12 +28,16 @@ function checkArduinoUpdateNeeded({ toolsPath } = {}) {
     if (fs.existsSync(updateJsonPath)) {
       const data = JSON.parse(fs.readFileSync(updateJsonPath, "utf8"));
       if (data.installed) {
-        logger.info("arduino-updater: Arduino tools already installed, skipping");
+        logger.info(
+          "arduino-updater: Arduino tools already installed, skipping",
+        );
         return null;
       }
     }
   } catch (e) {
-    logger.warn("arduino-updater: failed to read update.json, will re-run: " + e.message);
+    logger.warn(
+      "arduino-updater: failed to read update.json, will re-run: " + e.message,
+    );
   }
 
   return { arduinoDir, scriptPath, shellCmd, shellArgs, updateJsonPath };
@@ -46,7 +51,13 @@ function checkArduinoUpdateNeeded({ toolsPath } = {}) {
  *   - "complete"            process exited with 0
  *   - "error"   {message}   process error or non-zero exit
  */
-function startArduinoUpdate({ emitter, arduinoDir, shellCmd, shellArgs, updateJsonPath } = {}) {
+function startArduinoUpdate({
+  emitter,
+  arduinoDir,
+  shellCmd,
+  shellArgs,
+  updateJsonPath,
+} = {}) {
   if (!emitter) return;
 
   const child = spawn(shellCmd, shellArgs, {
@@ -86,7 +97,9 @@ function startArduinoUpdate({ emitter, arduinoDir, shellCmd, shellArgs, updateJs
         fs.writeFileSync(updateJsonPath, JSON.stringify({ installed: true }));
         logger.info("arduino-updater: update complete, marked as installed");
       } catch (e) {
-        logger.error("arduino-updater: failed to write update.json: " + e.message);
+        logger.error(
+          "arduino-updater: failed to write update.json: " + e.message,
+        );
       }
       emitter.emit("complete");
     } else {
@@ -148,9 +161,15 @@ function runArduinoCoreAction({ appRoot, coreId, action, emitter } = {}) {
     if (code === 0) {
       emitter.emit("complete");
     } else {
-      emitter.emit("error", { message: `${action} ${coreId} exited with code ${code}` });
+      emitter.emit("error", {
+        message: `${action} ${coreId} exited with code ${code}`,
+      });
     }
   });
 }
 
-module.exports = { checkArduinoUpdateNeeded, startArduinoUpdate, runArduinoCoreAction };
+module.exports = {
+  checkArduinoUpdateNeeded,
+  startArduinoUpdate,
+  runArduinoCoreAction,
+};

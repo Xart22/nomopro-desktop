@@ -1,6 +1,6 @@
 {
   "name": "nomokit-desktop",
-  "version": "3.0.7",
+  "version": "3.0.8",
   "main": "main.js",
   "scripts": {
     "test": "node test/run-tests.js && node test/e2e/e2e-test-matrix.js",
@@ -14,8 +14,9 @@
     "build-venv": "node scripts/build-venv.js",
     "clean:tools": "rimraf \"src/link/tools/Arduino/staging\" \"src/link/tools/Arduino/tmp\"",
     "clean:native": "rimraf \"node_modules/@abandonware/noble/build\"",
-    "prebuild": "npm run clean:tools && npm run prebuild:avr && node scripts/install_python_payload.js && node scripts/build-venv.js",
+    "prebuild": "npm run clean:tools && npm run prebuild:avr && npm run prebuild:avr-core && node scripts/install_python_payload.js && node scripts/build-venv.js",
     "prebuild:avr": "node -e \"var fs=require('fs'),p=require('path'),cfgPath='src/link/tools/Arduino/arduino-cli.yaml';if(fs.existsSync(cfgPath)){var y=require('js-yaml'),cfg=y.load(fs.readFileSync(cfgPath,'utf8'));var dir=cfg.directories.data,avrDir=p.join(dir,'packages/arduino/hardware/avr');if(!fs.existsSync(avrDir)){require('child_process').execSync('arduino-cli core install arduino:avr --config-file arduino-cli.yaml',{cwd:'src/link/tools/Arduino',stdio:'inherit'})}}else{console.warn('prebuild:avr — arduino-cli.yaml not found, skipping AVR core install.')}\"",
+    "prebuild:avr-core": "node scripts/prepare-avr-core.js",
     "build": "npm run prebuild && electron-builder --win",
     "build:mac": "npm run prebuild && electron-builder --mac",
     "deploy:all": "npm run prebuild && electron-builder --mac --win -p always",
@@ -30,7 +31,7 @@
   },
   "build": {
     "appId": "com.nomokit.desktop",
-    "productName": "nomokit-Desktop",
+    "productName": "Nomokit-Desktop",
     "asar": false,
     "npmRebuild": false,
     "files": [
@@ -74,15 +75,14 @@
     },
     "nsis": {
       "artifactName": "Nomokit-Desktop-${version}.${ext}",
-      "oneClick": true,
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
       "uninstallDisplayName": "Nomokit-Desktop-uninstaller",
       "installerIcon": "src/assets/img/nomokit.ico",
       "shortcutName": "Nomokit-Desktop",
       "runAfterFinish": true,
-      "allowToChangeInstallationDirectory": false,
       "perMachine": false,
-      "include": "build/installer.nsh",
-      "killProcessesAutomatically": true
+      "include": "build/installer.nsh"
     },
     "extraResources": [
       {
@@ -102,6 +102,13 @@
       {
         "from": "data/python-env",
         "to": "python-env",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "build/avr-core",
+        "to": "avr-core",
         "filter": [
           "**/*"
         ]

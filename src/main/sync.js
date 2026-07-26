@@ -4,13 +4,18 @@ const axios = require("axios");
 const extract = require("extract-zip");
 const Downloader = require("nodejs-file-downloader");
 const logger = require("./logger");
+const {
+  getAppDataPath,
+  getLocalLibJsonPath,
+  getLibraryVersionPath,
+} = require("./appdata");
 
 async function syncLibrary(appRoot) {
   logger.info("Syncing library");
   try {
-    const localDir = path.join(appRoot, "src/link/tools/Arduino/local");
-    const librariesDir = path.join(appRoot, "src/link/tools/Arduino/libraries");
-    const versionPath = path.join(appRoot, "src/link/tools/version.json");
+    const localDir = getAppDataPath("local");
+    const librariesDir = getAppDataPath("libraries");
+    const versionPath = getLibraryVersionPath();
 
     const versionFile = JSON.parse(fs.readFileSync(versionPath, "utf8"));
     const { data } = await axios.get("https://nomo-kit.com/api/check-update");
@@ -51,13 +56,20 @@ async function syncLibrary(appRoot) {
     // Merge local overrides
     if (fs.existsSync(localDir)) {
       for (const file of fs.readdirSync(localDir)) {
-        fs.cpSync(path.join(localDir, file), path.join(librariesDir, file), { recursive: true });
+        fs.cpSync(path.join(localDir, file), path.join(librariesDir, file), {
+          recursive: true,
+        });
       }
     }
 
     // Cleanup temp
     try {
-      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+      fs.rmSync(tempDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 500,
+      });
     } catch (e) {
       logger.warn("temp cleanup failed: " + e.message);
     }
@@ -68,7 +80,12 @@ async function syncLibrary(appRoot) {
   }
 }
 
-async function _syncResource(win, appRoot, windowUpdate, { logLabel, versionField, urlField, targetDir, zipName }) {
+async function _syncResource(
+  win,
+  appRoot,
+  windowUpdate,
+  { logLabel, versionField, urlField, targetDir, zipName },
+) {
   logger.info("Syncing " + logLabel);
   try {
     const version = JSON.parse(
@@ -84,7 +101,8 @@ async function _syncResource(win, appRoot, windowUpdate, { logLabel, versionFiel
         const res = await dialog.showMessageBox({
           type: "question",
           title: "Update",
-          message: "Update available for " + logLabel + ", do you want to update now?",
+          message:
+            "Update available for " + logLabel + ", do you want to update now?",
           buttons: ["Yes", "No"],
         });
         if (res.response === 0) {
@@ -112,7 +130,10 @@ async function _syncResource(win, appRoot, windowUpdate, { logLabel, versionFiel
             );
             // Cleanup downloaded zip
             try {
-              if (fs.existsSync(filePath) && path.basename(filePath) === zipName) {
+              if (
+                fs.existsSync(filePath) &&
+                path.basename(filePath) === zipName
+              ) {
                 fs.unlinkSync(filePath);
               }
             } catch (e) {
