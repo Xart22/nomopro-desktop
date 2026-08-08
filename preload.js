@@ -404,14 +404,26 @@ contextBridge.exposeInMainWorld("platformInfo", {
 
 // Bridge for desktop python runner expected by renderer
 contextBridge.exposeInMainWorld("nomoproDesktopPython", {
-  runPythonCode: async (code) => {
-    return await ipcRenderer.invoke("nomopro-python-run", { code });
+  runPythonCode: async (code, opts) => {
+    const timeoutMs =
+      opts && typeof opts.timeoutMs === "number" ? opts.timeoutMs : undefined;
+    return await ipcRenderer.invoke("nomopro-python-run", { code, timeoutMs });
   },
   stopPythonCode: async () => {
     return await ipcRenderer.invoke("nomopro-python-stop");
   },
   writeStdin: async (data) => {
     return await ipcRenderer.invoke("nomopro-python-write-stdin", data);
+  },
+  onStdout: (callback) => {
+    const handler = (_event, line) => callback(line);
+    ipcRenderer.on("nomopro-python-stdout", handler);
+    return () => ipcRenderer.removeListener("nomopro-python-stdout", handler);
+  },
+  onStderr: (callback) => {
+    const handler = (_event, line) => callback(line);
+    ipcRenderer.on("nomopro-python-stderr", handler);
+    return () => ipcRenderer.removeListener("nomopro-python-stderr", handler);
   },
 });
 

@@ -161,12 +161,14 @@ app.whenReady().then(async () => {
   const {
     ensureAppDataDir,
     migrateArduinoData,
+    extractBundledAvrCore,
     ensureArduinoCliConfig,
   } = require("./src/main/appdata");
   ensureAppDataDir("arduino-data");
   ensureAppDataDir("libraries");
   ensureAppDataDir("local");
   migrateArduinoData(__dirname);
+  extractBundledAvrCore(__dirname);
   ensureArduinoCliConfig(__dirname);
 
   // If sync window update is invoked, we need a fresh cli config set after sync
@@ -225,7 +227,7 @@ app.on("ready", async () => {
       .showMessageBox({
         type: "question",
         title: "Update available",
-        message: "Update is downloaded, will be installed on restart",
+        message: "Update Version is downloaded, do you want to install now?",
         buttons: ["Yes", "No"],
         yes: 0,
         no: 1,
@@ -357,9 +359,12 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
   killCurrentPython();
 
   const script = String(code || "");
+  // timeoutMs === 0 means "no timeout" (event/realtime mode)
   const effectiveTimeout =
-    typeof timeoutMs === "number" && timeoutMs > 0
-      ? timeoutMs
+    typeof timeoutMs === "number"
+      ? timeoutMs === 0
+        ? Infinity
+        : timeoutMs
       : PYTHON_EXECUTION_TIMEOUT_MS;
 
   // Use getPythonCandidates() which bundles bundled + system candidates
@@ -492,19 +497,24 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
     logger.warn(`Python process error: ${err.message}`);
   });
 
-  // Timeout guard
+  // Timeout guard — skip when effectiveTimeout is Infinity (event mode)
   let timeoutId;
   let timeoutTriggered = false;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      timeoutTriggered = true;
-      timedOut = true;
-      killCurrentPython();
-      reject(
-        new Error(`Python execution timed out after ${effectiveTimeout}ms.`),
-      );
-    }, effectiveTimeout);
-  });
+  let timeoutPromise;
+  if (!isFinite(effectiveTimeout)) {
+    timeoutPromise = new Promise(() => {}); // never resolve/reject
+  } else {
+    timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        timeoutTriggered = true;
+        timedOut = true;
+        killCurrentPython();
+        reject(
+          new Error(`Python execution timed out after ${effectiveTimeout}ms.`),
+        );
+      }, effectiveTimeout);
+    });
+  }
   currentPythonTimeout = timeoutId;
 
   // Process close handler
@@ -564,9 +574,10 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
     });
   });
 
-  // Race: close vs timeout (error is handled via logger, not via reject)
+  // Race: close vs timeout.
+  // Event mode (no timeout): closePromise never resolves → invoke hangs
+  // until stopPythonCode() is called. This keeps event target alive.
   return await Promise.race([closePromise, timeoutPromise]).catch((err) => {
-    // timeout rejection is expected; closePromise already resolved
     if (!timeoutTriggered) throw err;
     return {
       exitCode: -1,
@@ -580,14 +591,18 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
 });
 
 ipcMain.handle("nomopro-python-write-stdin", async (event, data) => {
+  logger.info("[Python-writeStdin] proc exists:", !!currentPythonProc);
   if (
     currentPythonProc &&
     currentPythonProc.stdin &&
     currentPythonProc.stdin.writable
   ) {
-    currentPythonProc.stdin.write(String(data) + "\n");
+    const payload = String(data) + "\n";
+    logger.info("[Python-writeStdin] writing:", payload.trim());
+    currentPythonProc.stdin.write(payload);
     return { written: true };
   }
+  logger.warn("[Python-writeStdin] FAILED - no process or stdin not writable");
   return { written: false, reason: "no-process-or-stdin" };
 });
 

@@ -158,6 +158,67 @@ function migrateArduinoData(appRoot) {
 }
 
 /**
+ * Extract bundled avr-core from installer resources to AppData on first run.
+ * After this, arduino-cli can find packages at the data dir configured in yaml.
+ * @param {string} appRoot
+ */
+function extractBundledAvrCore(appRoot) {
+  const dataDir = getAppDataPath("arduino-data");
+  const destPackages = path.join(dataDir, "packages");
+
+  // Already extracted — skip
+  if (fs.existsSync(destPackages)) {
+    logger.info("appdata: avr-core packages already extracted, skipping");
+    return;
+  }
+
+  let srcDir = null;
+
+  // Packaged app: look in extraResources
+  try {
+    const { app: electronApp } = require("electron");
+    if (electronApp.isPackaged) {
+      const candidates = [
+        path.join(process.resourcesPath, "avr-core"),
+        path.join(process.resourcesPath, "..", "avr-core"),
+      ];
+      for (const c of candidates) {
+        const pkg = path.join(c, "packages");
+        if (fs.existsSync(pkg)) {
+          srcDir = pkg;
+          break;
+        }
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  // Dev/unpacked: check build/avr-core
+  if (!srcDir) {
+    const devPkg = path.join(appRoot, "..", "build", "avr-core", "packages");
+    if (fs.existsSync(devPkg)) {
+      srcDir = devPkg;
+    }
+  }
+
+  if (!srcDir) {
+    logger.warn(
+      "appdata: bundled avr-core packages not found — arduino:avr may need manual install",
+    );
+    return;
+  }
+
+  try {
+    fs.mkdirSync(destPackages, { recursive: true });
+    fs.cpSync(srcDir, destPackages, { recursive: true });
+    logger.info("appdata: extracted avr-core packages to " + destPackages);
+  } catch (e) {
+    logger.error("appdata: failed to extract avr-core: " + e.message);
+  }
+}
+
+/**
  * Generate arduino-cli.yaml with data directory pointing to AppData.
  * Overwrites the existing config file in the app directory.
  * @param {string} appRoot
@@ -205,5 +266,6 @@ module.exports = {
   getLocalLibJsonPath,
   getLibraryVersionPath,
   migrateArduinoData,
+  extractBundledAvrCore,
   ensureArduinoCliConfig,
 };
