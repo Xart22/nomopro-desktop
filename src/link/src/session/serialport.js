@@ -1,3 +1,4 @@
+const fs = require("fs");
 const { SerialPort } = require("serialport");
 const ansi = require("ansi-string");
 const portLock = require("../lib/port-lock");
@@ -103,7 +104,24 @@ class SerialportSession extends Session {
 
   onAdvertisementReceived(peripheral, filters) {
     if (peripheral) {
-      peripheral.forEach((device) => {
+      peripheral.forEach((rawDevice) => {
+        // On macOS, SerialPort.list() can report the /dev/tty.* (dial-in)
+        // node instead of its /dev/cu.* (call-out) sibling. tty.* waits on
+        // carrier-detect and interferes with the DTR/RTS auto-reset toggle
+        // the Arduino bootloader handshake depends on, causing
+        // "programmer is not responding" even though the board is fine.
+        // Prefer cu.* when both nodes exist for the same device.
+        let device = rawDevice;
+        if (
+          process.platform === "darwin" &&
+          device.path &&
+          device.path.startsWith("/dev/tty.")
+        ) {
+          const cuPath = device.path.replace("/dev/tty.", "/dev/cu.");
+          if (fs.existsSync(cuPath)) {
+            device = { ...device, path: cuPath };
+          }
+        }
         const vendorId = String(device.vendorId).toUpperCase();
         const productId = String(device.productId).toUpperCase();
         const pnpid = `USB\\VID_${vendorId}&PID_${productId}`;
