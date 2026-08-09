@@ -131,6 +131,12 @@ describe("Pip Manager (main process)", () => {
 
   describe("fixExeShebangs", () => {
     it("fixes shebangs in pip.exe launchers", () => {
+      // fixExeShebangs is a no-op unless process.platform === "win32" (it
+      // only ever patches Windows .exe launchers), so this must force win32
+      // to actually exercise the patch logic when run on a mac/linux host.
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+
       const { fixExeShebangs } = require("../../src/main/pip-manager");
 
       // Create a fake venv dir with a mock pip.exe containing stale shebang
@@ -163,8 +169,12 @@ describe("Pip Manager (main process)", () => {
         "utf8",
       );
       assert.ok(fixedPip.startsWith("#!"), "should start with shebang");
+      // path.join here uses the actual host's path semantics (POSIX on
+      // mac/linux), same as inside fixExeShebangs itself — a hardcoded
+      // "\\python.exe" would only ever match when the test runs on real
+      // Windows, defeating the point of spoofing process.platform above.
       assert.ok(
-        fixedPip.includes(scriptsDir + "\\python.exe"),
+        fixedPip.includes(path.join(scriptsDir, "python.exe")),
         "shebang should point to new venv python: " + fixedPip,
       );
       assert.ok(
@@ -174,9 +184,13 @@ describe("Pip Manager (main process)", () => {
 
       // Cleanup
       require("fs").rmSync(testDir, { recursive: true, force: true });
+      Object.defineProperty(process, "platform", { value: originalPlatform });
     });
 
     it("does not modify files without stale paths", () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+
       const { fixExeShebangs } = require("../../src/main/pip-manager");
       const tmpDir = require("os").tmpdir();
       const testDir = path.join(
@@ -209,6 +223,7 @@ describe("Pip Manager (main process)", () => {
         "should not modify files without stale paths",
       );
       require("fs").rmSync(testDir, { recursive: true, force: true });
+      Object.defineProperty(process, "platform", { value: originalPlatform });
     });
   });
 });
