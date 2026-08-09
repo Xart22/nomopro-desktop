@@ -16,7 +16,52 @@ const ROOT = path.join(__dirname, "..");
 const TARGET = path.join(ROOT, "build", "avr-core");
 const PACKAGES_DST = path.join(TARGET, "packages");
 
+function dereferenceSymlinks(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) {
+      const real = fs.realpathSync(full);
+      fs.unlinkSync(full);
+      fs.copyFileSync(real, full);
+    } else if (entry.isDirectory()) {
+      dereferenceSymlinks(full);
+    }
+  }
+}
+
 function main() {
+  const avrHardwareDir = path.join(PACKAGES_DST, "arduino/hardware/avr");
+  const avrToolsDir = path.join(PACKAGES_DST, "arduino/tools");
+  const hasHardware =
+    fs.existsSync(avrHardwareDir) && fs.readdirSync(avrHardwareDir).length > 0;
+  const hasTools =
+    fs.existsSync(avrToolsDir) && fs.readdirSync(avrToolsDir).length > 0;
+  // The tools/ payload (avr-gcc, avrdude) is a platform-specific binary
+  // download — a bundle generated on macOS is useless (and silently broken)
+  // if bundled into a Windows build, and vice versa. Only skip regeneration
+  // if the existing bundle was built for the platform we're on right now.
+  const platformFile = path.join(TARGET, ".avr-platform");
+  const bundledPlatform = fs.existsSync(platformFile)
+    ? fs.readFileSync(platformFile, "utf8").trim()
+    : null;
+  const platformMatches = bundledPlatform === process.platform;
+  if (hasHardware && hasTools && platformMatches) {
+    console.log(
+      `[prepare-avr-core] avr core already present at ${TARGET} for ${process.platform}, skipping regeneration.`,
+    );
+    return;
+  }
+  if (hasHardware && hasTools && !platformMatches) {
+    console.log(
+      `[prepare-avr-core] avr core at ${TARGET} was built for platform '${bundledPlatform}', but this is '${process.platform}' — regenerating.`,
+    );
+  }
+  if (hasHardware && !hasTools) {
+    console.log(
+      `[prepare-avr-core] avr core at ${TARGET} has hardware defs but no toolchain (avr-gcc/avrdude) — regenerating.`,
+    );
+  }
+
   console.log("[prepare-avr-core] Installing arduino:avr core…");
 
   // Determine arduino-cli path
@@ -26,6 +71,10 @@ function main() {
 
   if (!fs.existsSync(cli)) {
     console.error("[prepare-avr-core] ERROR: arduino-cli not found at", cli);
+    console.error(
+      "[prepare-avr-core] Either install arduino-cli locally at that path, " +
+        "or ensure build/avr-core/ (committed to git) is present so this step can be skipped.",
+    );
     process.exit(1);
   }
 
@@ -87,6 +136,13 @@ board_manager:
   fs.mkdirSync(PACKAGES_DST, { recursive: true });
   const destDir = path.join(PACKAGES_DST, "arduino");
   fs.cpSync(pkgDir, destDir, { recursive: true });
+  // Some toolchain files (e.g. liblto_plugin.so) are symlinks with absolute
+  // targets inside tmpDataDir, which gets deleted by this script's own
+  // cleanup below. fs.cpSync's `dereference` option doesn't apply to
+  // symlinks found while recursing into subdirectories, so resolve them
+  // manually here (while tmpDataDir still exists) to avoid shipping a
+  // dangling link.
+  dereferenceSymlinks(destDir);
 
   // Write version marker
   const versions = fs
@@ -98,6 +154,7 @@ board_manager:
     path.join(TARGET, ".avr-version"),
     versions.join(",") || "unknown",
   );
+  fs.writeFileSync(path.join(TARGET, ".avr-platform"), process.platform);
 
   // Clean tmp staging
   try {

@@ -79,30 +79,6 @@ jobs:
           brew install zstd
           node scripts/install_python_payload.js --mac
 
-      - name: Install Arduino CLI
-        run: brew install arduino-cli
-
-      - name: Create Arduino CLI config
-        run: |
-          mkdir -p src/link/tools/Arduino/arduino-data/staging
-          cat > src/link/tools/Arduino/arduino-cli.yaml << 'EOF'
-          daemon:
-            port: "50051"
-          directories:
-            data: ./arduino-data
-            downloads: ./arduino-data/staging
-            user: ./arduino-data
-          library:
-            enable_unsafe_install: false
-          logging:
-            file: ""
-            format: text
-            level: info
-          board_manager:
-            additional_urls:
-              - https://dl.espressif.com/dl/package_esp32_index.json
-          EOF
-
       - name: Run tests
         run: npm run test:smoke
 

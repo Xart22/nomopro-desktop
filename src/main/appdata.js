@@ -196,7 +196,7 @@ function extractBundledAvrCore(appRoot) {
 
   // Dev/unpacked: check build/avr-core
   if (!srcDir) {
-    const devPkg = path.join(appRoot, "..", "build", "avr-core", "packages");
+    const devPkg = path.join(appRoot, "build", "avr-core", "packages");
     if (fs.existsSync(devPkg)) {
       srcDir = devPkg;
     }
