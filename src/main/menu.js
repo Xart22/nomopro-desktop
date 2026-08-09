@@ -136,6 +136,10 @@ function setMenu({ win, appRoot, app }) {
   }
 
   const template = [
+    ...(process.platform === "darwin"
+      ? [{ role: "appMenu" }]
+      : []),
+    { role: "editMenu" },
     {
       label: "View",
       submenu: [
