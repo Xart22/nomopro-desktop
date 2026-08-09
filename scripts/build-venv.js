@@ -26,17 +26,17 @@ const os = require("os");
 const APP_ROOT = path.join(__dirname, "..");
 const isWin = process.platform === "win32";
 
-// Find bundled python
+// Find bundled python. On macOS/Linux the "-full" python-build-standalone
+// archive (see install_python_payload.js) nests the interpreter under
+// install/bin/python3, not bin/python3 directly.
 const findBundledPython = () => {
-  const candidates = [
-    path.join(
-      APP_ROOT,
-      "python",
-      isWin ? "python.exe" : "bin",
-      isWin ? "python.exe" : "python3",
-    ),
-    path.join(APP_ROOT, "python", isWin ? "python.exe" : "python3"),
-  ];
+  const candidates = isWin
+    ? [path.join(APP_ROOT, "python", "python.exe")]
+    : [
+        path.join(APP_ROOT, "python", "install", "bin", "python3"),
+        path.join(APP_ROOT, "python", "bin", "python3"),
+        path.join(APP_ROOT, "python", "python3"),
+      ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
@@ -225,6 +225,29 @@ const main = async () => {
       console.error(`  ✗ All methods failed. Cannot create virtualenv.`);
       console.error(`  Try installing Python 3.8+ from python.org`);
       process.exit(1);
+    }
+  }
+
+  // python-build-standalone's "-full" macOS build links the interpreter
+  // dynamically against libpython (@executable_path/../lib/libpython3.11.dylib).
+  // venv --copies / virtualenv --always-copy only copy the interpreter binary
+  // itself, not this runtime dependency, so the copied venv python fails to
+  // launch at all (dyld "Library not loaded") until the .dylib is copied in too.
+  if (!isWin) {
+    const srcLibDir = path.join(pythonDir, "..", "lib");
+    const destLibDir = path.join(VENV_DIR, "lib");
+    if (fs.existsSync(srcLibDir)) {
+      const sharedLibs = fs
+        .readdirSync(srcLibDir)
+        .filter((f) => /^libpython3\.\d+\.(dylib|so(\.\d+)*)$/.test(f));
+      for (const lib of sharedLibs) {
+        const dest = path.join(destLibDir, lib);
+        if (!fs.existsSync(dest)) {
+          fs.mkdirSync(destLibDir, { recursive: true });
+          fs.copyFileSync(path.join(srcLibDir, lib), dest);
+          console.log(`  Copied shared library: ${lib}`);
+        }
+      }
     }
   }
 

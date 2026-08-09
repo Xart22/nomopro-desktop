@@ -41,7 +41,8 @@ const getDownloadUrl = () => {
     };
   } else if (PLATFORM === "darwin") {
     // macOS: use python-build-standalone (indygreg) portable builds
-    // Includes pip, full stdlib, and has correct bin/ layout
+    // Includes pip, full stdlib, and build artifacts; the interpreter itself
+    // lands at install/bin/python3 within the extracted tree, not bin/.
     const macArch = ARCH === "arm64" ? "aarch64" : "x86_64";
     const releaseTag = "20240713";
     return {
@@ -221,8 +222,10 @@ const main = async () => {
     }
     console.log("  Extraction complete.");
 
-    // Ensure python3 is executable
-    const python3 = path.join(targetDir, "bin", "python3");
+    // Ensure python3 is executable. The "-full" python-build-standalone
+    // archive (used here for pip/full-stdlib/build-artifact support) nests
+    // the actual interpreter under install/bin/, not bin/ directly.
+    const python3 = path.join(targetDir, "install", "bin", "python3");
     if (fs.existsSync(python3)) {
       try {
         fs.chmodSync(python3, 0o755);
