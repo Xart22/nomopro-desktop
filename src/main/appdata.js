@@ -100,19 +100,8 @@ function migrateArduinoData(appRoot) {
     }
   }
 
-  // Migrate libraries
-  const newLibsPath = getAppDataPath("libraries");
-  if (!fs.existsSync(newLibsPath)) {
-    const oldLibsPath = getOldLibrariesPath(appRoot);
-    if (fs.existsSync(oldLibsPath)) {
-      try {
-        fs.cpSync(oldLibsPath, newLibsPath, { recursive: true });
-        logger.info("appdata: migrated libraries to " + newLibsPath);
-      } catch (e) {
-        logger.warn("appdata: failed to migrate libraries: " + e.message);
-      }
-    }
-  }
+  // Note: libraries stay at src/link/tools/Arduino/libraries (arduino-cli reads them there).
+  // Only local (user-added) libraries go to AppData.
 
   // Migrate local
   const newLocalPath = getAppDataPath("local");

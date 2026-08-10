@@ -13,15 +13,28 @@ const {
 async function syncLibrary(appRoot) {
   logger.info("Syncing library");
   try {
+    // local (user-added) stays in AppData, survives reinstall
     const localDir = getAppDataPath("local");
-    const librariesDir = getAppDataPath("libraries");
+    // server libraries go where arduino-cli reads them (arduino.js:100)
+    const librariesDir = path.join(appRoot, "src/link/tools/Arduino/libraries");
+    // version metadata in AppData, survives reinstall
     const versionPath = getLibraryVersionPath();
 
-    const versionFile = JSON.parse(fs.readFileSync(versionPath, "utf8"));
+    // Fallback to version "0" if file missing (fresh install / no migration)
+    let versionFile;
+    try {
+      versionFile = JSON.parse(fs.readFileSync(versionPath, "utf8"));
+    } catch (_) {
+      versionFile = { version: "0" };
+    }
     const { data } = await axios.get("https://nomo-kit.com/api/check-update");
-    if (data.version === versionFile.version) return;
+    // Skip only if version matches AND libraries folder actually has content
+    const libExists =
+      fs.existsSync(librariesDir) && fs.readdirSync(librariesDir).length > 0;
+    if (data.version === versionFile.version && libExists) return;
 
     fs.mkdirSync(localDir, { recursive: true });
+    fs.mkdirSync(librariesDir, { recursive: true });
 
     // Download to isolated temp dir
     const tempDir = path.join(appRoot, "src/link/tools/temp");
@@ -38,22 +51,39 @@ async function syncLibrary(appRoot) {
     fs.mkdirSync(stageDir, { recursive: true });
     await extract(filePath, { dir: stageDir });
 
-    // Extract inner zips, skip version marker
+    // Extract inner zips, skip version marker zip
     const versionZip = data.version + ".zip";
     for (const name of fs.readdirSync(stageDir)) {
       if (!name.endsWith(".zip")) continue;
+      if (name === versionZip) {
+        fs.unlinkSync(path.join(stageDir, name));
+        continue;
+      }
       const p = path.join(stageDir, name);
       await extract(p, { dir: stageDir });
       fs.unlinkSync(p);
     }
 
-    // Swap staging into place
+    // Atomic swap: rename old out, move new in, then delete old
+    const oldDir = path.join(tempDir, "old-libraries");
     if (fs.existsSync(librariesDir)) {
-      fs.rmSync(librariesDir, { recursive: true, force: true });
+      fs.renameSync(librariesDir, oldDir);
     }
-    fs.renameSync(stageDir, librariesDir);
+    try {
+      fs.renameSync(stageDir, librariesDir);
+    } catch (e) {
+      // Rollback: restore old libraries on failure
+      if (fs.existsSync(oldDir)) {
+        fs.renameSync(oldDir, librariesDir);
+      }
+      throw e;
+    }
+    // Cleanup old only after successful swap
+    if (fs.existsSync(oldDir)) {
+      fs.rmSync(oldDir, { recursive: true, force: true });
+    }
 
-    // Merge local overrides
+    // Merge local overrides from AppData into librariesDir
     if (fs.existsSync(localDir)) {
       for (const file of fs.readdirSync(localDir)) {
         fs.cpSync(path.join(localDir, file), path.join(librariesDir, file), {
@@ -74,7 +104,8 @@ async function syncLibrary(appRoot) {
       logger.warn("temp cleanup failed: " + e.message);
     }
 
-    fs.writeFileSync(versionPath, JSON.stringify(data));
+    // Only persist version field, not entire API response
+    fs.writeFileSync(versionPath, JSON.stringify({ version: data.version }));
   } catch (error) {
     logger.error("syncLibrary error: " + error.message);
   }

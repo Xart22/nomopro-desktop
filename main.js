@@ -165,7 +165,7 @@ app.whenReady().then(async () => {
     ensureArduinoCliConfig,
   } = require("./src/main/appdata");
   ensureAppDataDir("arduino-data");
-  ensureAppDataDir("libraries");
+  // libraries stay at src/link/tools/Arduino/libraries — no AppData mirror needed
   ensureAppDataDir("local");
   migrateArduinoData(__dirname);
   extractBundledAvrCore(__dirname);

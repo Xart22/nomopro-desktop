@@ -136,9 +136,7 @@ function setMenu({ win, appRoot, app }) {
   }
 
   const template = [
-    ...(process.platform === "darwin"
-      ? [{ role: "appMenu" }]
-      : []),
+    ...(process.platform === "darwin" ? [{ role: "appMenu" }] : []),
     { role: "editMenu" },
     {
       label: "View",
@@ -186,7 +184,10 @@ function setMenu({ win, appRoot, app }) {
             const { dialog } = require("electron");
             const extract = require("extract-zip");
             const localDir = getAppDataPath("local");
-            const librariesDir = getAppDataPath("libraries");
+            const librariesDir = path.join(
+              appRoot,
+              "src/link/tools/Arduino/libraries",
+            );
             dialog
               .showOpenDialog({
                 properties: ["openFile"],
