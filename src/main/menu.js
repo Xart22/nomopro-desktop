@@ -9,6 +9,8 @@ const { runArduinoCoreAction } = require("./arduino-updater");
 const { showArduinoUpdateWindow } = require("./arduino-update-window");
 const { getAppDataPath, getLocalLibJsonPath } = require("./appdata");
 
+let _menuState = null;
+
 function getArduinoDir(appRoot) {
   return path.join(appRoot, "src/link/tools/Arduino");
 }
@@ -67,6 +69,12 @@ function isBuiltInCore(coreId) {
 
 function arduinoCoreAction(appRoot, action, coreId) {
   const emitter = new EventEmitter();
+  emitter.on("complete", () => {
+    if (_menuState) setMenu(_menuState);
+  });
+  emitter.on("error", () => {
+    if (_menuState) setMenu(_menuState);
+  });
   showArduinoUpdateWindow({ emitter });
   runArduinoCoreAction({ appRoot, coreId, action, emitter });
 }
@@ -91,6 +99,7 @@ function showInstalledCores(appRoot) {
 }
 
 function setMenu({ win, appRoot, app }) {
+  _menuState = { win, appRoot, app };
   let localLib = [];
   let version = {};
   try {
