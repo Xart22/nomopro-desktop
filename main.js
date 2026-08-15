@@ -159,15 +159,16 @@ const syncGui = async (windowUpdate) => _syncGui(win, appRoot, windowUpdate);
 const syncLink = async (windowUpdate) => _syncLink(win, appRoot, windowUpdate);
 app.whenReady().then(async () => {
   const {
+    ensureArduinoDataDir,
     ensureAppDataDir,
     migrateArduinoData,
     extractBundledAvrCore,
     ensureArduinoCliConfig,
   } = require("./src/main/appdata");
-  ensureAppDataDir("arduino-data");
+  migrateArduinoData(__dirname);
+  ensureArduinoDataDir();
   // libraries stay at src/link/tools/Arduino/libraries — no AppData mirror needed
   ensureAppDataDir("local");
-  migrateArduinoData(__dirname);
   extractBundledAvrCore(__dirname);
   ensureArduinoCliConfig(__dirname);
 

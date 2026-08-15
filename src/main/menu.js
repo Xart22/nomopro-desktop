@@ -45,8 +45,8 @@ function getInstalledCores(appRoot) {
  */
 function getAdditionalCores() {
   return [
-    { id: "esp32:esp32", label: "ESP32" },
-    { id: "esp8266:esp8266", label: "ESP8266" },
+    { id: "esp32:esp32", label: "ESP32", version: "2.0.16" },
+    { id: "esp8266:esp8266", label: "ESP8266", version: "3.0.2" },
     { id: "arduino:mbed_nano", label: "Arduino Nano 33 BLE" },
     { id: "arduino:renesas_uno", label: "Arduino Uno R4" },
   ];
@@ -67,7 +67,7 @@ function isBuiltInCore(coreId) {
   return getBuiltInCores().includes(coreId);
 }
 
-function arduinoCoreAction(appRoot, action, coreId) {
+function arduinoCoreAction(appRoot, action, coreId, version) {
   const emitter = new EventEmitter();
   emitter.on("complete", () => {
     if (_menuState) setMenu(_menuState);
@@ -76,12 +76,13 @@ function arduinoCoreAction(appRoot, action, coreId) {
     if (_menuState) setMenu(_menuState);
   });
   showArduinoUpdateWindow({ emitter });
-  runArduinoCoreAction({ appRoot, coreId, action, emitter });
+  runArduinoCoreAction({ appRoot, coreId, action, version, emitter });
 }
 
 function showInstalledCores(appRoot) {
   const cores = getInstalledCores(appRoot);
   const win = require("electron").BrowserWindow.getFocusedWindow();
+  console.log("Installed cores:", cores);
   if (cores.length === 0) {
     dialog.showMessageBox(win, {
       type: "info",
@@ -126,7 +127,7 @@ function setMenu({ win, appRoot, app }) {
     .filter((core) => !isBuiltInCore(core.id))
     .map((core) => ({
       label: `Install ${core.label}`,
-      click: () => arduinoCoreAction(appRoot, "install", core.id),
+      click: () => arduinoCoreAction(appRoot, "install", core.id, core.version),
     }));
 
   // Uninstall submenu: optional cores that are currently installed

@@ -14,7 +14,8 @@ const usbId = require("../lib/usb-id");
 
 const PERIPHERAL_UNPLUG_CHECK_INTERVAL = 100;
 
-const log = msg => console.log(`[MICROPYTHON ${new Date().toISOString().slice(11, 19)}] ${msg}`);
+const log = (msg) =>
+  console.log(`[MICROPYTHON ${new Date().toISOString().slice(11, 19)}] ${msg}`);
 
 class SerialportSession extends Session {
   constructor(socket, userDataPath, toolsPath) {
@@ -186,7 +187,10 @@ class SerialportSession extends Session {
       try {
         port.open((openErr) => {
           if (openErr) {
-            traceLog.trace("ws-connect", `OPEN FAILED for ${peripheral.path}: ${openErr.message}`);
+            traceLog.trace(
+              "ws-connect",
+              `OPEN FAILED for ${peripheral.path}: ${openErr.message}`,
+            );
             portLock.release(peripheral.path, LOCK_OWNER);
             if (isConnectAfterUpload === true) {
               this.sendRemoteRequest("peripheralUnplug", null);
@@ -201,7 +205,10 @@ class SerialportSession extends Session {
 
           port.set({ rts: rts, dtr: dtr }, (setErr) => {
             if (setErr) {
-              traceLog.trace("ws-connect", `SET RTS/DTR FAILED for ${peripheral.path}: ${setErr.message}`);
+              traceLog.trace(
+                "ws-connect",
+                `SET RTS/DTR FAILED for ${peripheral.path}: ${setErr.message}`,
+              );
               portLock.release(peripheral.path, LOCK_OWNER);
               if (isConnectAfterUpload === true) {
                 this.sendRemoteRequest("peripheralUnplug", null);
@@ -232,13 +239,18 @@ class SerialportSession extends Session {
             });
 
             port.on("error", (error) => {
-              traceLog.trace("ws-connect", `PORT ERROR EVENT: ${error.message}`);
-              log(`Port error: ${error.message} | isInDisconnect=${this.isInDisconnect}`);
+              traceLog.trace(
+                "ws-connect",
+                `PORT ERROR EVENT: ${error.message}`,
+              );
+              log(
+                `Port error: ${error.message} | isInDisconnect=${this.isInDisconnect}`,
+              );
               if (!this.isInDisconnect) {
                 this.disconnect();
                 this.sendRemoteRequest("peripheralUnplug", null);
               } else {
-                log('Port error suppressed (intentional disconnect)');
+                log("Port error suppressed (intentional disconnect)");
               }
             });
 
@@ -488,11 +500,68 @@ class SerialportSession extends Session {
               `detectOnly requested while already connected on ${this.peripheral.path} — skipping redundant probe`,
             );
             this.sendRemoteRequest("uploadSuccess", {
-              detected: { installed: true, type: "unknown", note: "already connected" },
+              detected: {
+                installed: true,
+                type: "unknown",
+                note: "already connected",
+              },
             });
+          } else if (config.uploadOnly) {
+            // Upload code via raw REPL. Disconnect live session first so the
+            // backend can hold the COM port exclusively — avoids layered
+            // WebSocket write burst that destabilizes USB-serial drivers.
+            this.isInDisconnect = true;
+            if (this.connectStateDetectorTimer) {
+              clearInterval(this.connectStateDetectorTimer);
+              this.connectStateDetectorTimer = null;
+            }
+            await this.disconnect();
+            log("Disconnected for upload, starting raw REPL upload");
+            try {
+              const payload = JSON.parse(code);
+              await this.tool.uploadFiles(payload.files, payload.folders);
+              log("Upload done, attempting reconnect");
+              for (let attempt = 0; attempt < 5; attempt++) {
+                await new Promise((r) => setTimeout(r, 2000));
+                try {
+                  await this.connect(this.peripheralParams, false);
+                  this.isInDisconnect = false;
+                  // connect() tidak otomatis memanggil read(). Tanpa read(),
+                  // isRead tetap false dan RX tidak diteruskan ke terminal.
+                  this.read();
+                  log("Reconnected after upload, RX resumed");
+                  // Auto-run main.py: tunggu board selesai boot MicroPython
+                  // (DTR reset saat port.open), lalu interrupt loop lama dan
+                  // soft reset agar main.py berjalan ulang dengan output
+                  // terlihat di terminal (isRead sudah true).
+                  await new Promise((r) => setTimeout(r, 2000));
+                  await this.write({ message: "03", encoding: "hex" });
+                  await new Promise((r) => setTimeout(r, 300));
+                  await this.write({ message: "03", encoding: "hex" });
+                  await new Promise((r) => setTimeout(r, 300));
+                  await this.write({ message: "04", encoding: "hex" });
+                  this.sendRemoteRequest("uploadSuccess", null);
+                  return;
+                } catch (e) {
+                  log(
+                    `Reconnect attempt ${attempt + 1}/5 failed: ${e.message}`,
+                  );
+                  this.sendstd(
+                    `${ansi.yellow_dark}Retry ${attempt + 1}/5...\n`,
+                  );
+                }
+              }
+              this.isInDisconnect = false;
+              throw new Error("Failed to reconnect after upload");
+            } catch (err) {
+              this.isInDisconnect = false;
+              this.sendRemoteRequest("uploadError", {
+                message: ansi.red + err.message,
+              });
+            }
           } else if (config.flashOnly) {
             // Flash firmware — needs disconnect
-            log('Flash starting — blocking detectors');
+            log("Flash starting — blocking detectors");
             this.isInDisconnect = true;
             // Stop unplug detector so GUI doesn't show "lost connection"
             if (this.connectStateDetectorTimer) {
@@ -500,19 +569,21 @@ class SerialportSession extends Session {
               this.connectStateDetectorTimer = null;
             }
             await this.disconnect();
-            log('Disconnected, starting flash');
+            log("Disconnected, starting flash");
             if (config.board === "rpi_pico") {
               await this.tool.flashPicoUF2();
             } else {
-              this.sendstd(`${ansi.clear}Put chip into download mode: HOLD BOOT > PRESS EN > RELEASE BOOT...\n`);
-              await new Promise(r => setTimeout(r, 5000));
+              this.sendstd(
+                `${ansi.clear}Put chip into download mode: HOLD BOOT > PRESS EN > RELEASE BOOT...\n`,
+              );
+              await new Promise((r) => setTimeout(r, 5000));
               await this.tool.flashWithEsptool(config.board || "esp32");
             }
-            log('Flash done, attempting reconnect');
+            log("Flash done, attempting reconnect");
             // Wait for board to reboot then retry reconnect
             this.sendstd(`${ansi.clear}Waiting for board to reboot...\n`);
             for (let attempt = 0; attempt < 5; attempt++) {
-              await new Promise(r => setTimeout(r, 2000));
+              await new Promise((r) => setTimeout(r, 2000));
               try {
                 await this.connect(this.peripheralParams, false);
                 this.isInDisconnect = false;
@@ -526,7 +597,7 @@ class SerialportSession extends Session {
                     }
                   }, PERIPHERAL_UNPLUG_CHECK_INTERVAL);
                 }
-                log('Reconnected! Restarting detectors');
+                log("Reconnected! Restarting detectors");
                 this.sendstd(`${ansi.green_dark}Reconnected!\n`);
                 this.sendRemoteRequest("uploadSuccess", null);
                 return;
@@ -536,22 +607,17 @@ class SerialportSession extends Session {
               }
             }
             this.isInDisconnect = false;
-            log('All reconnect attempts failed');
+            log("All reconnect attempts failed");
             // All retries failed — send peripheralUnplug so GUI knows
             this.sendRemoteRequest("peripheralUnplug", null);
             throw new Error("Failed to reconnect after flash");
           } else {
-            // Upload-only: push code via raw REPL through the existing connection
-            // (device already flashed & connected, no disconnect/reconnect needed).
-            this.sendRemoteRequest("setUploadAbortEnabled", true);
-            try {
-              const result = await this.tool.uploadCode(code);
-              this.sendRemoteRequest("setUploadAbortEnabled", false);
-              this.sendRemoteRequest("uploadSuccess", result);
-            } catch (uploadErr) {
-              this.sendRemoteRequest("setUploadAbortEnabled", false);
-              throw uploadErr;
-            }
+            // Upload-only mode tidak lagi didukung di backend.
+            // Upload code ditangani renderer via raw REPL pada koneksi existing.
+            this.sendRemoteRequest("uploadError", {
+              message:
+                "Upload code tidak didukung di backend; gunakan raw REPL renderer.",
+            });
           }
         } catch (err) {
           this.sendRemoteRequest("uploadError", {
@@ -561,10 +627,12 @@ class SerialportSession extends Session {
             // Try to reconnect after failed flash instead of disconnecting
             this.sendstd(`${ansi.clear}Flash failed, reconnecting...\n`);
             for (let attempt = 0; attempt < 5; attempt++) {
-              await new Promise(r => setTimeout(r, 2000));
+              await new Promise((r) => setTimeout(r, 2000));
               try {
                 await this.connect(this.peripheralParams, false);
-                this.sendstd(`${ansi.green_dark}Reconnected after flash failure.\n`);
+                this.sendstd(
+                  `${ansi.green_dark}Reconnected after flash failure.\n`,
+                );
                 this.isInDisconnect = false;
                 return;
               } catch (e) {

@@ -8,10 +8,13 @@ const traceLog = require("../lib/trace-log");
 
 const DEFAULT_BAUD = 115200;
 const FLASH_BAUD = 460800;
+// MicroPython raw REPL input buffer ~256 byte. Chunk 128 raw byte ->
+// ~171 char base64 -> aman di bawah batas buffer input.
+const CHUNK_BYTES = 128;
 
 const FIRMWARE = {
   esp32: {
-    file: "ESP32_GENERIC-20240105-v1.22.1.bin",
+    file: "ESP32_GENERIC-20260406-v1.28.0.bin",
     flashOffset: "0x1000",
   },
   esp8266: {
@@ -145,90 +148,191 @@ class MicroPython {
   }
 
   // =================================================================
-  // MAIN ENTRY: Flash + Upload (called from serialport.js)
+  // UPLOAD CODE — raw REPL (backend, port eksklusif)
   // =================================================================
 
-  async flashFirmwareAndUpload(code) {
-    const board = this._config.board || "esp32";
-
-    // First, try to flash firmware
-    if (board === "esp32" || board === "esp8266") {
-      await this.flashWithEsptool(board);
-    } else if (board === "rpi_pico") {
-      await this.flashPicoUF2();
+  async uploadFiles(files, folders) {
+    const fileList = files || [];
+    if (fileList.length === 0) {
+      throw new Error("no files to upload");
     }
-
-    // Wait for board to reboot
-    this._sendstd(`${ansi.clear}Waiting for board to reboot...\n`);
-    await this._sleep(5000);
-
-    // Upload code via raw REPL
-    await this.uploadCode(code);
-  }
-
-  async uploadCode(code) {
-    const baudRate = this._config.baudRate || DEFAULT_BAUD;
-    const fileName = this._config.fileName || "main.py";
-
-    traceLog.trace(
-      "uploadCode",
-      `START port=${this._peripheralPath} baud=${baudRate} bytes=${code.length} fileName=${fileName}`,
+    const folderList = folders || [];
+    const baud = this._config.baudRate || DEFAULT_BAUD;
+    this._sendstd(
+      `${ansi.clear}Opening port ${this._peripheralPath} at ${baud} baud...\n`,
     );
 
     const port = new SerialPort({
       path: this._peripheralPath,
-      baudRate: baudRate,
+      baudRate: baud,
       autoOpen: false,
     });
     port.on("error", (e) =>
-      traceLog.trace("uploadCode", `PORT ERROR EVENT: ${e.message}`),
+      traceLog.trace("uploadFiles", `PORT ERROR EVENT: ${e.message}`),
     );
-    port.on("close", () => traceLog.trace("uploadCode", "PORT CLOSE EVENT"));
-
-    await this._openPort(port, "uploadCode");
 
     try {
-      await this._enterRawREPL(port);
+      await this._openPort(port, "uploadFiles");
+      await this._enterRawRepl(port);
+      await this._execRaw(port, "import binascii");
 
-      this._sendstd(`Uploading ${code.length} bytes -> ${fileName}...\n`);
-      const uploadScript = this._buildUploadScript(code, fileName);
-      traceLog.trace(
-        "uploadCode",
-        `Sending script, total ${uploadScript.length} bytes chunked`,
-      );
-      await this._sendChunked(port, uploadScript);
-      traceLog.trace("uploadCode", "All chunks sent, sending Ctrl+D (execute)");
-      await this._sendRaw(port, "\x04");
-      traceLog.trace("uploadCode", "Ctrl+D sent, waiting for UPLOAD_OK");
-
-      // Timeout mengikuti ukuran data: minimal 15s, +1s per 2KB
-      const timeout = Math.max(15000, 15000 + Math.floor(code.length / 2000) * 1000);
-      const response = await this._readUntil(port, "UPLOAD_OK", timeout);
-      if (!response.includes("UPLOAD_OK")) {
-        throw new Error("Upload failed: no UPLOAD_OK response");
+      for (const folder of folderList) {
+        this._sendstd(`mkdir: ${folder}\n`);
+        await this._execRaw(
+          port,
+          `try:\n import os; os.mkdir('${folder}')\nexcept: pass`,
+        );
       }
 
-      traceLog.trace("uploadCode", "UPLOAD_OK received");
-      this._sendstd(`${ansi.green_dark}Upload complete!\n`);
-      return { success: true, fileName };
-    } catch (err) {
-      traceLog.trace("uploadCode", `ERROR: ${err.message}`);
-      throw err;
+      for (const file of fileList) {
+        this._sendstd(`Writing ${file.path}\n`);
+        // Truncate sekali, lalu append chunk kecil (1024 byte) dengan flow
+        // control terminator \x04 per chunk. Kirim utuh 20KB membanjiri UART
+        // RX ESP32 -> file kosong. Chunk kecil + waitForMarker aman.
+        await this._execRaw(port, `open('${file.path}','wb').close()`);
+
+        const b64 = this._toBase64(file.content);
+        const chunks = this._chunkBase64(b64, CHUNK_BYTES);
+        for (let c = 0; c < chunks.length; c++) {
+          await this._execRaw(
+            port,
+            `f=open('${file.path}','ab');f.write(binascii.a2b_base64('${chunks[c]}'));f.close()`,
+            30000,
+          );
+          if ((c + 1) % 10 === 0) {
+            await this._execRaw(port, "import gc;gc.collect()");
+          }
+        }
+      }
+
+      // Keluar raw REPL dengan soft reset \x02: kembali ke friendly REPL dan
+      // auto-run main.py. Output main.py terbaca di _readAndSend (log upload).
+      await this._sendRaw(port, "\x02");
+      await this._readAndSend(port, 3000);
+      this._sendstd(`${ansi.green_dark}Upload complete\n`);
     } finally {
-      await this._closePort(port, "uploadCode");
-      traceLog.trace("uploadCode", "DONE (port closed)");
+      await this._closePort(port, "uploadFiles");
     }
   }
 
-  _buildUploadScript(code, fileName) {
-    const safe = code
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'")
-      .replace(/\r\n/g, "\\n")
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\n");
+  // Baca output device selama durasi tertentu dan kirim ke FE via _sendstd.
+  // Dipakai setelah soft reset agar output main.py terlihat user.
+  _readAndSend(port, durationMs) {
+    return new Promise((resolve) => {
+      let buf = "";
+      let idleTimer = null;
+      let hardTimer = null;
+      let done = false;
 
-    return `import os\r\nf=open('${fileName}','w')\r\nf.write('${safe}')\r\nf.close()\r\nprint('UPLOAD_OK')\r\n`;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        if (idleTimer) clearTimeout(idleTimer);
+        if (hardTimer) clearTimeout(hardTimer);
+        port.removeListener("data", onData);
+        resolve(buf);
+      };
+
+      const onData = (d) => {
+        const text = d.toString("utf-8");
+        buf += text;
+        this._sendstd(text);
+        // Hentikan lebih awal kalau 800ms tanpa data (program selesai).
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(finish, 800);
+      };
+
+      port.on("data", onData);
+      // Batas maksimal — jangan gantung kalau output deras terus.
+      hardTimer = setTimeout(finish, durationMs);
+    });
+  }
+
+  _toBase64(str) {
+    return Buffer.from(str, "utf-8").toString("base64");
+  }
+
+  _chunkBase64(b64, chunkBytes) {
+    const charCount = Math.floor(chunkBytes / 3) * 4;
+    const chunks = [];
+    for (let i = 0; i < b64.length; i += charCount) {
+      chunks.push(b64.slice(i, i + charCount));
+    }
+    return chunks;
+  }
+
+  async _enterRawRepl(port) {
+    this._readBuffer = "";
+    // Soft reset ke friendly REPL dulu — kalau device masih dalam raw mode
+    // dari sesi sebelumnya, Ctrl+A tidak memunculkan banner "raw REPL"
+    // (hanya prompt ">"), sehingga tunggu banner pasti timeout.
+    await this._sendRaw(port, "\x02");
+    await this._sleep(500);
+    await this._sendRaw(port, "\r\x03");
+    await this._sleep(200);
+    await this._sendRaw(port, "\x03");
+    await this._sleep(200);
+    await this._sendRaw(port, "\x01");
+    await this._readUntilMarker(port, "raw REPL", 3000);
+  }
+
+  async _execRaw(port, command, timeoutMs = 15000) {
+    // Buang sisa buffer sebelum kirim. Marker \x04 sisa dari perintah
+    // sebelumnya membuat waitForMarker resolve prematur -> chunk tertukar
+    // dan file kacau.
+    this._readBuffer = "";
+    await this._sendRaw(port, `${command}\x04`);
+    await this._readUntilMarker(port, "\x04", timeoutMs);
+  }
+
+  _readUntilAnyMarker(port, markers, timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const findIdx = (buf) => {
+        let best = -1;
+        let bestMarker = null;
+        for (const m of markers) {
+          const i = buf.indexOf(m);
+          if (i >= 0 && (best === -1 || i < best)) {
+            best = i;
+            bestMarker = m;
+          }
+        }
+        return { idx: best, marker: bestMarker };
+      };
+
+      const buf = this._readBuffer || "";
+      const found = findIdx(buf);
+      if (found.idx >= 0) {
+        this._readBuffer = buf.substring(found.idx + found.marker.length);
+        return resolve();
+      }
+
+      const onData = (d) => {
+        const chunk = d.toString("utf-8");
+        this._readBuffer = (this._readBuffer || "") + chunk;
+        const hit = findIdx(this._readBuffer);
+        if (hit.idx >= 0) {
+          cleanup();
+          this._readBuffer = this._readBuffer.substring(
+            hit.idx + hit.marker.length,
+          );
+          resolve();
+        }
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`Timeout menunggu marker ${JSON.stringify(markers)}`));
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        port.removeListener("data", onData);
+      };
+      port.on("data", onData);
+    });
+  }
+
+  _readUntilMarker(port, marker, timeoutMs) {
+    return this._readUntilAnyMarker(port, [marker], timeoutMs);
   }
 
   // =================================================================
@@ -255,7 +359,10 @@ class MicroPython {
     await new Promise((r) => setTimeout(r, 10000));
 
     this._sendstd(`${ansi.clear}Erasing ${chip.toUpperCase()} flash...\n`);
-    traceLog.trace("flashWithEsptool", "Calling esptool erase_flash (--after no_reset)");
+    traceLog.trace(
+      "flashWithEsptool",
+      "Calling esptool erase_flash (--after no_reset)",
+    );
     await this._spawnEsptool([
       "--chip",
       "auto",
@@ -274,7 +381,10 @@ class MicroPython {
     this._sendstd(
       `${ansi.green_dark}Writing MicroPython firmware (1-2 min)...\n`,
     );
-    traceLog.trace("flashWithEsptool", "Calling esptool write_flash (--after hard_reset)");
+    traceLog.trace(
+      "flashWithEsptool",
+      "Calling esptool write_flash (--after hard_reset)",
+    );
     await this._spawnEsptool([
       "--chip",
       "auto",
@@ -386,7 +496,10 @@ class MicroPython {
       autoOpen: false,
     });
     port.on("error", (e) =>
-      traceLog.trace("_sendMachineBootloader", `PORT ERROR EVENT: ${e.message}`),
+      traceLog.trace(
+        "_sendMachineBootloader",
+        `PORT ERROR EVENT: ${e.message}`,
+      ),
     );
     await this._openPort(port, "_sendMachineBootloader");
     try {
@@ -423,8 +536,13 @@ class MicroPython {
     return new Promise((resolve, reject) => {
       port.open(async (err) => {
         if (err) {
-          const isAccessDenied = /access.*denied|access is denied/i.test(err.message || "");
-          traceLog.trace("_openPort", `[${caller}] OPEN FAILED: ${err.message}`);
+          const isAccessDenied = /access.*denied|access is denied/i.test(
+            err.message || "",
+          );
+          traceLog.trace(
+            "_openPort",
+            `[${caller}] OPEN FAILED: ${err.message}`,
+          );
           if (isAccessDenied && attempt + 1 < maxAttempts) {
             traceLog.trace(
               "_openPort",
@@ -441,7 +559,10 @@ class MicroPython {
           }
           return reject(err);
         }
-        traceLog.trace("_openPort", `[${caller}] OPEN OK (attempt ${attempt + 1})`);
+        traceLog.trace(
+          "_openPort",
+          `[${caller}] OPEN OK (attempt ${attempt + 1})`,
+        );
         resolve();
       });
     });
@@ -479,54 +600,8 @@ class MicroPython {
     });
   }
 
-  // Kirim data besar per-chunk (meniru raw REPL client resmi seperti Thonny/ampy)
-  // supaya tidak membanjiri buffer driver USB-to-serial dalam satu write besar.
-  async _sendChunked(port, data, chunkSize = 256, delayMs = 15) {
-    const totalChunks = Math.ceil(data.length / chunkSize);
-    traceLog.trace(
-      "_sendChunked",
-      `START total=${data.length} bytes in ${totalChunks} chunks of ${chunkSize}`,
-    );
-    let i = 0;
-    let chunkIndex = 0;
-    for (; i < data.length; i += chunkSize) {
-      chunkIndex++;
-      const chunk = data.slice(i, i + chunkSize);
-      try {
-        await this._sendRaw(port, chunk);
-      } catch (err) {
-        traceLog.trace(
-          "_sendChunked",
-          `FAILED at chunk ${chunkIndex}/${totalChunks} (offset ${i}): ${err.message}`,
-        );
-        throw err;
-      }
-      // Log every chunk at low volume, every 10th at higher volume to keep file readable
-      if (chunkIndex === 1 || chunkIndex % 10 === 0 || chunkIndex === totalChunks) {
-        traceLog.trace(
-          "_sendChunked",
-          `chunk ${chunkIndex}/${totalChunks} sent (offset ${i})`,
-        );
-      }
-      await this._sleep(delayMs);
-    }
-    traceLog.trace("_sendChunked", "ALL CHUNKS SENT OK");
-  }
-
   _sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
-  }
-
-  async _enterRawREPL(port) {
-    traceLog.trace("_enterRawREPL", "sending Ctrl+C x2 (interrupt)");
-    await this._sendRaw(port, "\r\x03");
-    await this._sleep(200);
-    await this._sendRaw(port, "\x03");
-    await this._sleep(200);
-    traceLog.trace("_enterRawREPL", "sending Ctrl+A (enter raw REPL)");
-    await this._sendRaw(port, "\x01");
-    await this._sleep(300);
-    traceLog.trace("_enterRawREPL", "DONE");
   }
 
   _readAvailable(port, timeout) {
@@ -540,25 +615,6 @@ class MicroPython {
         buf += d.toString();
         clearTimeout(t);
         setTimeout(() => resolve(buf), 200);
-      });
-    });
-  }
-
-  _readUntil(port, marker, timeout) {
-    return new Promise((resolve, reject) => {
-      let buf = "";
-      const t = setTimeout(() => {
-        port.removeAllListeners("data");
-        traceLog.trace("_readUntil", `TIMEOUT waiting for "${marker}" after ${timeout}ms. buf so far: ${buf.slice(0, 200)}`);
-        reject(new Error(`Timeout waiting for "${marker}"`));
-      }, timeout);
-      port.on("data", (d) => {
-        buf += d.toString();
-        if (buf.includes(marker)) {
-          clearTimeout(t);
-          port.removeAllListeners("data");
-          resolve(buf);
-        }
       });
     });
   }
@@ -605,7 +661,10 @@ class MicroPython {
           this._sendstd(
             `[esptool] Attempt ${attempt}/${maxAttempts}: ${this._pyPath} ${this._esptoolPath} ${args.join(" ")}\n`,
           );
-          traceLog.trace("_spawnEsptool", `attempt ${attempt}/${maxAttempts}: ${args.join(" ")}`);
+          traceLog.trace(
+            "_spawnEsptool",
+            `attempt ${attempt}/${maxAttempts}: ${args.join(" ")}`,
+          );
           const result = await this._trySpawn(args);
           return resolve(result);
         } catch (err) {
@@ -650,7 +709,10 @@ class MicroPython {
         reject(new Error(`Failed to start esptool: ${err.message}`));
       });
       proc.on("close", (code) => {
-        traceLog.trace("_trySpawn", `esptool process closed, exit code=${code}`);
+        traceLog.trace(
+          "_trySpawn",
+          `esptool process closed, exit code=${code}`,
+        );
         if (code === 0) {
           resolve(out);
         } else {

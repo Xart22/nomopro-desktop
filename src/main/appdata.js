@@ -3,6 +3,13 @@ const path = require("path");
 const fs = require("fs");
 const logger = require("./logger");
 
+const WINDOWS_ARDUINO_DATA_ROOT = path.join(
+  "C:",
+  "NomokitData",
+  "arduino-data",
+);
+let cachedArduinoDataRoot = null;
+
 /**
  * Get a path under the persistent user data directory (%APPDATA%/nomokit-desktop).
  * This data survives app reinstalls/uninstalls.
@@ -21,6 +28,54 @@ function getAppDataPath(...segments) {
  */
 function ensureAppDataDir(...segments) {
   const dir = getAppDataPath(...segments);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+/**
+ * Resolve the Arduino data root path.
+ * On Windows, prefer a short dedicated path outside AppData and installer dir.
+ * Falls back to AppData if the preferred root can't be created.
+ * @returns {string}
+ */
+function getArduinoDataRoot() {
+  if (cachedArduinoDataRoot) {
+    return cachedArduinoDataRoot;
+  }
+
+  if (process.platform === "win32") {
+    try {
+      fs.mkdirSync(WINDOWS_ARDUINO_DATA_ROOT, { recursive: true });
+      cachedArduinoDataRoot = WINDOWS_ARDUINO_DATA_ROOT;
+      return cachedArduinoDataRoot;
+    } catch (e) {
+      logger.warn(
+        "appdata: failed to use C:/NomokitData/arduino-data, fallback to AppData: " +
+          e.message,
+      );
+    }
+  }
+
+  cachedArduinoDataRoot = getAppDataPath("arduino-data");
+  return cachedArduinoDataRoot;
+}
+
+/**
+ * Join path segments under the resolved Arduino data root.
+ * @param {...string} segments
+ * @returns {string}
+ */
+function getArduinoDataPath(...segments) {
+  return path.join(getArduinoDataRoot(), ...segments);
+}
+
+/**
+ * Ensure Arduino data root (or child dir) exists.
+ * @param {...string} segments
+ * @returns {string}
+ */
+function ensureArduinoDataDir(...segments) {
+  const dir = getArduinoDataPath(...segments);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -79,24 +134,105 @@ function getLibraryVersionPath() {
 }
 
 /**
+ * Merge package directories from legacy source to target without overwriting
+ * existing target package vendor folders.
+ * @param {string} sourcePackages
+ * @param {string} targetPackages
+ */
+function mergePackagesDir(sourcePackages, targetPackages) {
+  if (!fs.existsSync(sourcePackages)) {
+    return;
+  }
+
+  fs.mkdirSync(targetPackages, { recursive: true });
+  const packageVendors = fs.readdirSync(sourcePackages, {
+    withFileTypes: true,
+  });
+
+  for (const entry of packageVendors) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+
+    const sourceVendorPath = path.join(sourcePackages, entry.name);
+    const targetVendorPath = path.join(targetPackages, entry.name);
+    if (!fs.existsSync(targetVendorPath)) {
+      fs.cpSync(sourceVendorPath, targetVendorPath, { recursive: true });
+      logger.info(
+        "appdata: migrated package vendor " +
+          entry.name +
+          " to " +
+          targetVendorPath,
+      );
+    }
+  }
+}
+
+/**
+ * Merge legacy arduino-data root into the new root.
+ * Non-package files are copied if missing; package vendors are merged by folder.
+ * @param {string} sourceRoot
+ * @param {string} targetRoot
+ */
+function mergeArduinoDataRoot(sourceRoot, targetRoot) {
+  if (!fs.existsSync(sourceRoot) || sourceRoot === targetRoot) {
+    return;
+  }
+
+  fs.mkdirSync(targetRoot, { recursive: true });
+  const sourceEntries = fs.readdirSync(sourceRoot, { withFileTypes: true });
+
+  for (const entry of sourceEntries) {
+    const sourcePath = path.join(sourceRoot, entry.name);
+    const targetPath = path.join(targetRoot, entry.name);
+
+    if (entry.name === "packages" && entry.isDirectory()) {
+      mergePackagesDir(sourcePath, targetPath);
+      continue;
+    }
+
+    if (!fs.existsSync(targetPath)) {
+      fs.cpSync(sourcePath, targetPath, { recursive: true });
+      logger.info("appdata: migrated " + sourcePath + " to " + targetPath);
+    }
+  }
+}
+
+/**
  * Migrate old arduino data (inside app dir) to new AppData location.
  * Only runs once — if AppData destination already exists, skip.
  * @param {string} appRoot
  */
 function migrateArduinoData(appRoot) {
-  const newDataPath = getAppDataPath("arduino-data");
-  if (fs.existsSync(newDataPath)) {
-    logger.info("appdata: arduino-data already migrated, skipping");
+  const newDataPath = getArduinoDataPath();
+  const legacyAppDataPath = getAppDataPath("arduino-data");
+  const oldDataPath = getOldArduinoDataPath(appRoot);
+  const candidates = [legacyAppDataPath, oldDataPath];
+
+  try {
+    fs.mkdirSync(newDataPath, { recursive: true });
+  } catch (e) {
+    logger.warn("appdata: failed to ensure target arduino-data: " + e.message);
     return;
   }
 
-  const oldDataPath = getOldArduinoDataPath(appRoot);
-  if (fs.existsSync(oldDataPath)) {
+  for (const source of candidates) {
+    if (!source || source === newDataPath || !fs.existsSync(source)) {
+      continue;
+    }
+
     try {
-      fs.cpSync(oldDataPath, newDataPath, { recursive: true });
-      logger.info("appdata: migrated arduino-data to " + newDataPath);
+      mergeArduinoDataRoot(source, newDataPath);
+      logger.info(
+        "appdata: merged arduino-data from " + source + " to " + newDataPath,
+      );
     } catch (e) {
-      logger.warn("appdata: failed to migrate arduino-data: " + e.message);
+      logger.warn(
+        "appdata: failed to merge arduino-data from " +
+          source +
+          ": " +
+          e.message,
+      );
     }
   }
 
@@ -152,7 +288,7 @@ function migrateArduinoData(appRoot) {
  * @param {string} appRoot
  */
 function extractBundledAvrCore(appRoot) {
-  const dataDir = getAppDataPath("arduino-data");
+  const dataDir = getArduinoDataPath();
   const destPackages = path.join(dataDir, "packages");
 
   // Already extracted — skip
@@ -213,11 +349,12 @@ function extractBundledAvrCore(appRoot) {
  * @param {string} appRoot
  */
 function ensureArduinoCliConfig(appRoot) {
-  const dataDir = getAppDataPath("arduino-data").replace(/\\/g, "/");
+  const dataDir = getArduinoDataPath().replace(/\\/g, "/");
   const arduinoDir = path.join(appRoot, "src/link/tools/Arduino");
   const configPath = path.join(arduinoDir, "arduino-cli.yaml");
 
   try {
+    const yaml = require("js-yaml");
     const config = {
       daemon: { port: "50051" },
       directories: {
@@ -238,7 +375,39 @@ function ensureArduinoCliConfig(appRoot) {
       },
     };
 
-    fs.writeFileSync(configPath, require("js-yaml").dump(config), "utf8");
+    if (fs.existsSync(configPath)) {
+      try {
+        const current = yaml.load(fs.readFileSync(configPath, "utf8")) || {};
+        const currentDirs = current.directories || {};
+        const desiredDirs = config.directories;
+        const currentUrls = (
+          (current.board_manager || {}).additional_urls || []
+        ).map(String);
+        const desiredUrls = config.board_manager.additional_urls;
+
+        const sameDirs =
+          currentDirs.data === desiredDirs.data &&
+          currentDirs.downloads === desiredDirs.downloads &&
+          currentDirs.user === desiredDirs.user;
+        const sameUrls =
+          JSON.stringify(currentUrls) === JSON.stringify(desiredUrls);
+
+        if (sameDirs && sameUrls) {
+          logger.info(
+            "appdata: arduino-cli.yaml already up to date -> data dir: " +
+              dataDir,
+          );
+          return;
+        }
+      } catch (e) {
+        logger.warn(
+          "appdata: failed to parse existing arduino-cli.yaml, rewriting: " +
+            e.message,
+        );
+      }
+    }
+
+    fs.writeFileSync(configPath, yaml.dump(config), "utf8");
     logger.info("appdata: generated arduino-cli.yaml -> data dir: " + dataDir);
   } catch (e) {
     logger.error("appdata: failed to generate arduino-cli.yaml: " + e.message);
@@ -248,12 +417,17 @@ function ensureArduinoCliConfig(appRoot) {
 module.exports = {
   getAppDataPath,
   ensureAppDataDir,
+  getArduinoDataRoot,
+  getArduinoDataPath,
+  ensureArduinoDataDir,
   getOldArduinoDataPath,
   getOldLibrariesPath,
   getOldLocalPath,
   getOldLocalLibJsonPath,
   getLocalLibJsonPath,
   getLibraryVersionPath,
+  mergePackagesDir,
+  mergeArduinoDataRoot,
   migrateArduinoData,
   extractBundledAvrCore,
   ensureArduinoCliConfig,

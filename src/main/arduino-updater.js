@@ -118,15 +118,22 @@ function startArduinoUpdate({
  *   - "complete"            process exited with 0
  *   - "error"   {message}   process error or non-zero exit
  */
-function runArduinoCoreAction({ appRoot, coreId, action, emitter } = {}) {
+function runArduinoCoreAction({
+  appRoot,
+  coreId,
+  action,
+  version,
+  emitter,
+} = {}) {
   if (!emitter || !coreId) return;
 
   const isWin = process.platform === "win32";
   const arduinoDir = path.resolve(appRoot, "src/link/tools/Arduino");
   const cli = path.join(arduinoDir, isWin ? "arduino-cli.exe" : "arduino-cli");
   const cfg = path.join(arduinoDir, "arduino-cli.yaml");
+  const target = version ? `${coreId}@${version}` : coreId;
 
-  const child = spawn(cli, ["core", action, coreId, "--config-file", cfg], {
+  const child = spawn(cli, ["core", action, target, "--config-file", cfg], {
     windowsHide: isWin,
     stdio: ["ignore", "pipe", "pipe"],
     cwd: arduinoDir,

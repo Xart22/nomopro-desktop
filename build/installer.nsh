@@ -79,19 +79,19 @@ done:
     ; Windows 10 1607+ requires this key + longPathAware manifest
     WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
 
-    ; Copy bundled AVR core + tools (avr-gcc, avrdude, etc.) to AppData.
+    ; Copy bundled AVR core + tools (avr-gcc, avrdude, etc.) to dedicated data dir.
     ; These persist across app updates. Structure mirrors arduino-cli's package dir.
     ;
     ; Source:  $INSTDIR/resources/avr-core/packages/arduino/
-    ; Dest:    %APPDATA%/nomokit-desktop/arduino-data/packages/arduino/
+    ; Dest:    C:\NomokitData\arduino-data\packages\arduino\
     ;
     ; Only copy if not already present (e.g. first install or after clean uninstall).
-    IfFileExists "$APPDATA\nomokit-desktop\arduino-data\packages\arduino\hardware\avr" avr_done 0
+    IfFileExists "C:\NomokitData\arduino-data\packages\arduino\hardware\avr" avr_done 0
     IfFileExists "$INSTDIR\resources\avr-core\packages\arduino" 0 avr_done
-    CreateDirectory "$APPDATA\nomokit-desktop\arduino-data\packages"
+    CreateDirectory "C:\NomokitData\arduino-data\packages"
     CopyFiles /SILENT "$INSTDIR\resources\avr-core\packages\arduino" \
-               "$APPDATA\nomokit-desktop\arduino-data\packages\"
-    DetailPrint "AVR core and tools bundled, copied to AppData."
+               "C:\NomokitData\arduino-data\packages\"
+    DetailPrint "AVR core and tools bundled, copied to C:\NomokitData."
     avr_done:
 !macroend
 
@@ -109,14 +109,13 @@ done:
 
     ; Tanya user: hapus data Arduino (cores, library) atau tidak
     MessageBox MB_YESNO|MB_ICONQUESTION \
-        "Hapus juga data Arduino (board cores, library) di AppData?$\r$\n\
+        "Hapus juga data Arduino (board cores, library) di C:\NomokitData?$\r$\n\
          Jika tidak, data akan tetap tersimpan untuk instalasi ulang nanti." \
         /SD IDNO IDYES delete_arduino_data
     Goto arduino_done
 
     delete_arduino_data:
-        ; Nama folder AppData sesuai package.json name field
-        RMDir /r "$APPDATA\nomokit-desktop\arduino-data"
+        RMDir /r "C:\NomokitData\arduino-data"
         RMDir /r "$APPDATA\nomokit-desktop\libraries"
         RMDir /r "$APPDATA\nomokit-desktop\library-version.json"
         RMDir /r "$APPDATA\nomokit-desktop\link-data"
