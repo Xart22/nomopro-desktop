@@ -53,6 +53,37 @@ const getDownloadUrl = () => {
   throw new Error(`Unsupported platform: ${PLATFORM}`);
 };
 
+// Phase-1 training-engine dependencies (scikit-learn training + ONNX export),
+// installed into the bundled Python env so the nomokit-ml persistent training
+// session has them available without a per-user pip install at runtime.
+const PIP_DEPS = ["scikit-learn", "numpy", "onnx", "skl2onnx", "onnxruntime"];
+
+// Returns true if the install succeeded, false otherwise. Callers must check
+// this and avoid marking the payload as fully installed on failure — these
+// packages are required for the ML training feature to work at all.
+const installPipDeps = (pythonExe, cwd) => {
+  console.log(
+    `  Installing training-engine dependencies: ${PIP_DEPS.join(", ")}`,
+  );
+  const result = spawnSync(
+    pythonExe,
+    ["-m", "pip", "install", "--no-warn-script-location", ...PIP_DEPS],
+    {
+      stdio: "inherit",
+      encoding: "utf8",
+      cwd,
+    },
+  );
+  if (result.status === 0) {
+    console.log("  Training-engine dependencies installed successfully.");
+    return true;
+  }
+  console.warn(
+    `  Warning: training-engine dependency installation may have failed (exit ${result.status}).`,
+  );
+  return false;
+};
+
 const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -161,6 +192,12 @@ const main = async () => {
 
   await downloadFile(downloadInfo.url, downloadDest);
 
+  // Tracks whether the Phase-1 training-engine pip install succeeded. Left
+  // `true` unless installPipDeps() actually runs and reports failure, so the
+  // pre-existing (and out-of-scope) warn-only ensurepip/pip-bootstrap
+  // handling below keeps its current behavior of not blocking the marker.
+  let pipDepsOk = true;
+
   if (downloadInfo.type === "zip") {
     extractZip(downloadDest, targetDir);
 
@@ -193,6 +230,7 @@ const main = async () => {
       });
       if (result.status === 0) {
         console.log("  pip installed successfully.");
+        pipDepsOk = installPipDeps(pythonExe, targetDir);
       } else {
         console.warn("  Warning: pip installation may have failed.");
       }
@@ -236,6 +274,22 @@ const main = async () => {
 
     // pip is already included in python-build-standalone full builds
     console.log("  pip is included in the build.");
+    if (fs.existsSync(python3)) {
+      pipDepsOk = installPipDeps(python3, targetDir);
+    }
+  }
+
+  if (!pipDepsOk) {
+    // Do NOT write the .installed marker: the extracted interpreter itself
+    // is fine, but it's missing the training-engine dependencies the ML
+    // feature needs. Leaving the marker absent means the next run of this
+    // script sees no sentinel and retries the full flow (re-extraction is
+    // cheap/idempotent — it just overwrites the same files) instead of
+    // silently shipping/keeping a Python payload that looks installed but
+    // can't run training jobs.
+    throw new Error(
+      "Training-engine dependency installation failed; .installed marker was not written so the install will retry on next run.",
+    );
   }
 
   // Write marker

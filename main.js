@@ -2,6 +2,29 @@ const { app, BrowserWindow, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const logger = require("./src/main/logger");
+const {
+  guardChildStdin,
+  safeWriteStdin,
+} = require("./src/main/python-stdin");
+
+// Backstop: writing to any child process's stdin after its read end closed
+// raises an async EPIPE on the stream. The per-spawn guards above cover the
+// Python paths; this catches the same pipe-class error from any other child
+// (micropython flashing, nlp, link) so a broken pipe can never take the whole
+// app down. Genuine bugs are re-thrown with default crash visibility.
+process.on("uncaughtException", (err) => {
+  const code = err && err.code;
+  if (
+    code === "EPIPE" ||
+    code === "ERR_STREAM_DESTROYED" ||
+    code === "ERR_STREAM_WRITE_AFTER_END"
+  ) {
+    logger.warn(`Ignored stray pipe write error (${code})`);
+    return;
+  }
+  logger.error(`Uncaught exception: ${(err && err.stack) || err}`);
+  throw err;
+});
 const { io } = require("socket.io-client");
 const { autoUpdater } = require("electron-updater");
 
@@ -283,6 +306,8 @@ app.on("before-quit", () => {
   }
 });
 
+const setMenu = () => _setMenu({ win, appRoot, app });
+
 // ipc handlers and socket listeners are registered by modules in createWindow
 
 // ---- Hardened Python runner IPC for renderer bridge ----
@@ -439,6 +464,7 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
           `[Python] spawn error event for ${candidate}: ${e.message}`,
         );
       });
+      guardChildStdin(proc, "[Python]", logger);
       used = candidate;
       logger.info("[Python] Using: " + candidate);
       break;
@@ -593,14 +619,7 @@ ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {
 
 ipcMain.handle("nomopro-python-write-stdin", async (event, data) => {
   logger.info("[Python-writeStdin] proc exists:", !!currentPythonProc);
-  if (
-    currentPythonProc &&
-    currentPythonProc.stdin &&
-    currentPythonProc.stdin.writable
-  ) {
-    const payload = String(data) + "\n";
-    logger.info("[Python-writeStdin] writing:", payload.trim());
-    currentPythonProc.stdin.write(payload);
+  if (safeWriteStdin(currentPythonProc, String(data) + "\n")) {
     return { written: true };
   }
   logger.warn("[Python-writeStdin] FAILED - no process or stdin not writable");
@@ -630,6 +649,316 @@ ipcMain.handle("nomopro-python-stop", async () => {
 
 ipcMain.handle("get-python-candidates", async () => {
   return getPythonCandidates();
+});
+
+// ---- Persistent Python sessions (nomokit-ml relay support) ----
+// The nomopro-python-run/-write-stdin/-stop handlers above track a single
+// global process (currentPythonProc) with no run id -- starting a new run
+// kills whatever was already running. That's the right behavior for the
+// one-shot "run this code" flow the existing GUI bundle uses (confirmed by
+// grepping src/gui/lib.min.js, which only calls runPythonCode/stopPythonCode/
+// writeStdin and listens on the raw nomopro-python-stdout/-stderr channels
+// expecting a plain string payload -- left untouched here).
+//
+// A persistent training session needs its own isolated, long-lived process
+// that isn't killed by an unrelated getVersion() check or another persistent
+// session. Rather than retrofit a run id onto the existing single-slot IPC,
+// this is an additive, parallel subsystem keyed by a renderer-generated
+// sessionId, so concurrent sessions (or a session running alongside the
+// legacy run IPC) can never cross-talk.
+const persistentPythonSessions = new Map(); // sessionId -> { proc, pendingStdin, timeout }
+
+// Backstop timeout for persistent sessions -- guards against a session being
+// orphaned (renderer navigates away, e.g. a Socket.IO disconnect swapping
+// win.loadFile() to a different page, without calling stop()) and never
+// getting cleaned up. Deliberately much longer than PYTHON_EXECUTION_TIMEOUT_MS
+// (30s) above: unlike the one-shot run flow, a persistent session backs a real
+// training job that can legitimately run for a long time, so this is a bound
+// on worst-case leakage, not a tight execution budget -- killing an
+// in-progress training run early would be worse than a slow leak.
+const PERSISTENT_PYTHON_SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
+
+const cleanupPersistentSession = (sessionId) => {
+  const session = persistentPythonSessions.get(sessionId);
+  if (session && session.timeout) {
+    clearTimeout(session.timeout);
+  }
+  persistentPythonSessions.delete(sessionId);
+};
+
+// Kills every tracked persistent-session child process and clears the map.
+// Called on app quit (see app.on("before-quit") below) and also invoked
+// explicitly from the two relaunch flows that bypass "before-quit" via
+// app.exit() -- see src/main/sync.js (_syncResource) and src/main/socket.js
+// (login-fail handler), both of which call this via
+// require(path.join(appRoot, "main.js")).killAllPersistentPythonSessions()
+// right before app.exit().
+const killAllPersistentPythonSessions = () => {
+  for (const [sessionId, session] of persistentPythonSessions) {
+    if (session.timeout) {
+      clearTimeout(session.timeout);
+    }
+    if (session.proc && !session.proc.killed) {
+      try {
+        session.proc.kill("SIGKILL");
+      } catch (e) {
+        logger.warn(
+          `Failed to kill persistent python session ${sessionId} during cleanup sweep`,
+        );
+      }
+    }
+  }
+  persistentPythonSessions.clear();
+};
+
+app.on("before-quit", killAllPersistentPythonSessions);
+
+ipcMain.handle(
+  "nomopro-python-start-persistent",
+  async (event, { sessionId, code }) => {
+    if (!sessionId) throw new Error("sessionId is required");
+
+    // Defensive: if a session with this id is somehow already running
+    // (shouldn't happen -- ids are generated fresh per startPersistent() call),
+    // stop it first rather than leaking the old process.
+    const existing = persistentPythonSessions.get(sessionId);
+    if (existing && existing.proc && !existing.proc.killed) {
+      try {
+        existing.proc.kill("SIGKILL");
+      } catch (e) {
+        // ignore
+      }
+    }
+    persistentPythonSessions.delete(sessionId);
+
+    const script = String(code || "");
+    const candidates = getPythonCandidates();
+
+    let proc = null;
+    let used = null;
+    logger.info(
+      `[Python:persistent:${sessionId}] Candidates: ` + candidates.join(", "),
+    );
+
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      try {
+        const validateArgs =
+          candidate === "py" ? ["-3", "--version"] : ["--version"];
+        const check = childProcess.spawnSync(candidate, validateArgs, {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        if (check.status !== 0) {
+          continue;
+        }
+
+        const tmpFile = path.join(
+          require("os").tmpdir(),
+          "nomopro_persistent_" +
+            sessionId +
+            "_" +
+            Date.now() +
+            "_" +
+            Math.random().toString(36).slice(2) +
+            ".py",
+        );
+        try {
+          fs.writeFileSync(tmpFile, script, "utf-8");
+        } catch (_) {}
+
+        const args = ["-u", tmpFile];
+        const env = {
+          ...process.env,
+          PYTHONUNBUFFERED: "1",
+        };
+
+        proc = childProcess.spawn(candidate, args, {
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+          env,
+        });
+        if (!proc) {
+          try {
+            fs.unlinkSync(tmpFile);
+          } catch (_) {}
+          continue;
+        }
+        proc.on("exit", () => {
+          try {
+            fs.unlinkSync(tmpFile);
+          } catch (_) {}
+        });
+        used = candidate;
+        logger.info(`[Python:persistent:${sessionId}] Using: ` + candidate);
+        break;
+      } catch (err) {
+        logger.info(
+          `[Python:persistent:${sessionId}] Candidate ${candidate} threw: ${err.message}`,
+        );
+        proc = null;
+      }
+    }
+
+    if (!proc) {
+      throw new Error(
+        `Python executable not found. Tried: ${candidates.join(", ")}`,
+      );
+    }
+
+    const session = { proc, pendingStdin: [] };
+    persistentPythonSessions.set(sessionId, session);
+
+    // Backstop timeout -- see PERSISTENT_PYTHON_SESSION_TIMEOUT_MS above.
+    session.timeout = setTimeout(() => {
+      logger.warn(
+        `[Python:persistent:${sessionId}] exceeded ${PERSISTENT_PYTHON_SESSION_TIMEOUT_MS}ms backstop timeout; killing orphaned session`,
+      );
+      if (session.proc && !session.proc.killed) {
+        try {
+          session.proc.kill("SIGKILL");
+        } catch (e) {
+          logger.warn(
+            `Failed to kill timed-out persistent python session ${sessionId}`,
+          );
+        }
+      }
+    }, PERSISTENT_PYTHON_SESSION_TIMEOUT_MS);
+
+    let stdoutBuffer = "";
+    proc.stdout.on("data", (chunk) => {
+      const text = String(chunk || "");
+      stdoutBuffer += text;
+      const lines = stdoutBuffer.split(/\r?\n/);
+      stdoutBuffer = lines.pop() || "";
+      lines.forEach((line) => {
+        if (win && win.webContents)
+          win.webContents.send("nomopro-python-persistent-stdout", {
+            sessionId,
+            line,
+          });
+      });
+    });
+
+    let stderrBuffer = "";
+    proc.stderr.on("data", (chunk) => {
+      const text = String(chunk || "");
+      stderrBuffer += text;
+      const lines = stderrBuffer.split(/\r?\n/);
+      stderrBuffer = lines.pop() || "";
+      lines.forEach((line) => {
+        if (win && win.webContents)
+          win.webContents.send("nomopro-python-persistent-stderr", {
+            sessionId,
+            line,
+          });
+      });
+    });
+
+    proc.on("error", (err) => {
+      logger.warn(
+        `[Python:persistent:${sessionId}] process error: ${err.message}`,
+      );
+    });
+
+    guardChildStdin(proc, `[Python:persistent:${sessionId}]`, logger);
+
+    proc.on("close", (exitCode, signal) => {
+      // Flush remaining buffers
+      if (stdoutBuffer && win && win.webContents) {
+        win.webContents.send("nomopro-python-persistent-stdout", {
+          sessionId,
+          line: stdoutBuffer,
+        });
+      }
+      if (stderrBuffer && win && win.webContents) {
+        win.webContents.send("nomopro-python-persistent-stderr", {
+          sessionId,
+          line: stderrBuffer,
+        });
+      }
+      cleanupPersistentSession(sessionId);
+      if (win && win.webContents) {
+        win.webContents.send("nomopro-python-persistent-exit", {
+          sessionId,
+          exitCode,
+          signal,
+        });
+      }
+    });
+
+    // Flush any stdin writes that arrived (and were queued) before the
+    // process finished spawning.
+    if (session.pendingStdin.length) {
+      session.pendingStdin.forEach((data) => {
+        safeWriteStdin(proc, data);
+      });
+      session.pendingStdin = [];
+    }
+
+    return { sessionId, used };
+  },
+);
+
+ipcMain.handle(
+  "nomopro-python-persistent-write-stdin",
+  async (event, { sessionId, data }) => {
+    const session = persistentPythonSessions.get(sessionId);
+    if (!session) {
+      return { written: false, reason: "no-session" };
+    }
+    if (safeWriteStdin(session.proc, String(data))) {
+      return { written: true };
+    }
+    // Process hasn't finished spawning yet -- queue it, it'll be flushed
+    // once nomopro-python-start-persistent finishes wiring up the process.
+    session.pendingStdin.push(String(data));
+    return { written: false, queued: true };
+  },
+);
+
+ipcMain.handle(
+  "nomopro-python-persistent-stop",
+  async (event, { sessionId }) => {
+    const session = persistentPythonSessions.get(sessionId);
+    if (!session) {
+      return { stopped: false, reason: "no-session" };
+    }
+    try {
+      if (session.proc && !session.proc.killed) {
+        session.proc.kill("SIGKILL");
+      }
+      cleanupPersistentSession(sessionId);
+      return { stopped: true };
+    } catch (e) {
+      return { stopped: false, error: String(e) };
+    }
+  },
+);
+
+// ---- Python version check (independent of both the legacy single-slot run
+// and the persistent-session map above, so it never kills or interferes with
+// either) ----
+ipcMain.handle("nomopro-python-version", async () => {
+  const candidates = getPythonCandidates();
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    try {
+      const validateArgs =
+        candidate === "py" ? ["-3", "--version"] : ["--version"];
+      const result = childProcess.spawnSync(candidate, validateArgs, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status === 0) {
+        const version = (result.stdout || result.stderr || "").trim();
+        return { python: candidate, version };
+      }
+    } catch (e) {
+      // try next candidate
+    }
+  }
+  return { python: null, version: null };
 });
 
 // ---- MicroPython Upload & Flash IPC ----
@@ -878,3 +1207,12 @@ app.whenReady().then(async () => {
     }
   }, 3000); // Run 3s after startup
 });
+
+// Exported so the relaunch flows in src/main/sync.js and src/main/socket.js
+// (both of which call app.exit(), which bypasses "before-quit") can sweep
+// persistent Python sessions before the process is torn down. Node caches
+// this module after Electron's initial require of it as the app entry point,
+// so a later `require(path.join(appRoot, "main.js"))` from those modules
+// returns this same, fully-initialized exports object rather than
+// re-executing main.js.
+module.exports = { killAllPersistentPythonSessions };

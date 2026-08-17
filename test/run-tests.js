@@ -70,6 +70,24 @@ try {
     "main.js must have health check",
   );
 
+  // Verify main.js registers the persistent Python session IPC channels
+  require("assert").ok(
+    mainSource.includes("nomopro-python-start-persistent"),
+    "main.js must register nomopro-python-start-persistent handler",
+  );
+  require("assert").ok(
+    mainSource.includes("nomopro-python-persistent-write-stdin"),
+    "main.js must register nomopro-python-persistent-write-stdin handler",
+  );
+  require("assert").ok(
+    mainSource.includes("nomopro-python-persistent-stop"),
+    "main.js must register nomopro-python-persistent-stop handler",
+  );
+  require("assert").ok(
+    mainSource.includes("nomopro-python-version"),
+    "main.js must register nomopro-python-version handler",
+  );
+
   // Verify preload.js has the right API contracts
   const preloadSource = fs.readFileSync(path.join(ROOT, "preload.js"), "utf8");
   require("assert").ok(
@@ -83,6 +101,14 @@ try {
   require("assert").ok(
     preloadSource.includes("fileStorage"),
     "preload.js must expose fileStorage API",
+  );
+  require("assert").ok(
+    preloadSource.includes("startPersistent"),
+    "preload.js must expose nomoproDesktopPython.startPersistent",
+  );
+  require("assert").ok(
+    preloadSource.includes("getVersion"),
+    "preload.js must expose nomoproDesktopPython.getVersion",
   );
 
   console.log("  ✓ All module exports and source contracts verified");
@@ -170,6 +196,33 @@ if (fs.existsSync(MOCHA)) {
   }
 } else {
   console.log("  ⚠ mocha not found, skipping pip manager tests");
+}
+
+// 4b. Unit tests: Python stdin guard (EPIPE crash regression)
+console.log("\n--- Python stdin guard unit tests ---");
+if (fs.existsSync(MOCHA)) {
+  const stdinResult = spawnSync(
+    process.execPath,
+    [MOCHA, path.join(__dirname, "unit", "python-stdin.test.js")],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      cwd: ROOT,
+    },
+  );
+  if (stdinResult.status === 0) {
+    console.log(stdinResult.stdout
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => "  " + l)
+      .join("\n"));
+  } else {
+    console.error(stdinResult.stdout);
+    console.error(stdinResult.stderr);
+    exitCode = 1;
+  }
+} else {
+  console.log("  ⚠ mocha not found, skipping Python stdin guard tests");
 }
 
 // 5. Source contract validation for pip
