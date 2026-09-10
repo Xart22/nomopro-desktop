@@ -74,21 +74,26 @@ window.addEventListener("DOMContentLoaded", async () => {
     ipcRenderer.on("login-fail", loginFailHandler);
   }
 
-  // Ensure only one download-progress listener
+  // One download-progress listener. preload re-runs on every win.loadFile
+  // navigation in the same renderer process, so a bare `on()` here would
+  // stack duplicate handlers (removeListener with a fresh closure never
+  // matched anything). Clear stale ones first.
   const downloadHandler = (event, text) => {
     const progress = document.getElementById("progress-bar");
     const textProgress = document.getElementById("textUpdate");
     if (!progress || !textProgress) return;
-    const pct = String(text || "0");
+    const num = Number(text);
+    const pct = Number.isFinite(num)
+      ? Math.min(100, Math.max(0, Math.floor(num)))
+      : 0;
     progress.style.width = pct + "%";
     progress.textContent = pct + "%";
-    if (pct.includes("100")) {
-      progress.style.width = "100%";
-      progress.textContent = "100%";
+    progress.setAttribute("aria-valuenow", String(pct));
+    if (pct >= 100) {
       textProgress.textContent = "Installing...";
     }
   };
-  ipcRenderer.removeListener("download-progress", downloadHandler);
+  ipcRenderer.removeAllListeners("download-progress");
   ipcRenderer.on("download-progress", downloadHandler);
 });
 
@@ -384,11 +389,7 @@ contextBridge.exposeInMainWorld("nomoproDesktopPython", {
   },
 });
 
-// Method to get app path for local file loading
-contextBridge.exposeInMainWorld("electronAPI", {
-  // ... existing methods ...
-  getAppPath: () => {
-    return __dirname;
-  },
-  // ... rest of existing methods ...
-});
+// Note: window.electronAPI is exposed once near the top of this file
+// (including getAppPath). Do NOT expose "electronAPI" again here —
+// Electron throws on a second expose of the same key and the whole
+// preload (all bridges) fails with it.

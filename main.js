@@ -7,7 +7,7 @@ const { autoUpdater } = require("electron-updater");
 
 autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.autoInstallOnAppQuit = false;
 let win;
 let socket = null;
 let isInstallingUpdate = false;
@@ -88,6 +88,67 @@ try {
 // lightweight wrappers so existing call sites keep working
 const syncLibrary = async () => _syncLibrary(appRoot);
 
+// Single-instance lock (Windows): a second launch (double-clicked
+// shortcut while the app runs) must focus the existing window instead of
+// starting a zombie instance that fights over port 8601, user.json, etc.
+let isSecondInstance = false;
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  isSecondInstance = true;
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+      if (typeof win.moveTop === "function") win.moveTop();
+    }
+  });
+}
+
+const LINK_URL = "http://127.0.0.1:8601";
+// How long to wait for the link server `ready` event before loading the
+// GUI anyway (did-fail-load retry below still covers a slow server).
+const LINK_READY_TIMEOUT_MS = 10000;
+const INITIAL_LOAD_MAX_RETRIES = 5;
+
+// Load the first page. Prod (packaged) always uses the bundled GUI file.
+// The http://127.0.0.1:8601 link URL is dev-only: in dev we wait for the
+// link server `ready` event instead of racing server.listen() (which
+// previously produced intermittent ERR_CONNECTION_REFUSED blank windows).
+const loadInitialPage = () => {
+  if (!win || win.isDestroyed()) return;
+  if (token.token === undefined) {
+    win.loadFile(path.join(__dirname, "/src/auth/index.html"));
+    return;
+  }
+  if (app.isPackaged) {
+    win.loadFile(path.join(__dirname, "/src/gui/index.html"));
+    return;
+  }
+  const doLoad = () => {
+    if (!win || win.isDestroyed()) return;
+    win.loadURL(LINK_URL).catch((err) => {
+      logger.warn("Initial page load failed: " + (err.message || err));
+    });
+  };
+  if (link && typeof link.once === "function") {
+    let settled = false;
+    const go = () => {
+      if (!settled) {
+        settled = true;
+        doLoad();
+      }
+    };
+    link.once("ready", go);
+    // Port held by someone else, unexpected error, etc: try loading
+    // anyway — did-fail-load retry handles a not-yet-ready server.
+    link.once("error", go);
+    setTimeout(go, LINK_READY_TIMEOUT_MS);
+  } else {
+    doLoad();
+  }
+};
 app.commandLine.appendSwitch("ignore-certificate-errors");
 const createWindow = () => {
   // Initialize socket inside createWindow so handlers can be registered before connect events
@@ -107,23 +168,36 @@ const createWindow = () => {
   });
   win.maximize();
   if (!app.isPackaged) win.webContents.openDevTools();
-  logger.info("socket.connected: " + socket.connected);
-  // Load initial page based on current state
-  if (socket.connected) {
-    if (token.token !== undefined) {
-      //win.loadURL("http://127.0.0.1:8601");
-      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-    } else {
-      win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-    }
-  } else {
-    if (token.token !== undefined) {
-      win.loadFile(path.join(__dirname, "/src/gui/index.html"));
-      //win.loadURL("http://127.0.0.1:8601");
-    } else {
-      win.loadFile(path.join(__dirname, "/src/auth/index.html"));
-    }
-  }
+  // Retry the initial GUI load if the dev link server is not accepting
+  // connections yet (prod loads the bundled file, so this never triggers
+  // there). Without this, a slow server.listen() leaves a
+  // permanently blank window (only file:// update pages are excluded).
+  let initialLoadRetries = 0;
+  win.webContents.on(
+    "did-fail-load",
+    (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      if (typeof validatedURL !== "string" || !validatedURL.startsWith(LINK_URL))
+        return;
+      if (initialLoadRetries >= INITIAL_LOAD_MAX_RETRIES) {
+        logger.warn(
+          "Initial page failed to load after retries: " + errorDescription,
+        );
+        return;
+      }
+      initialLoadRetries += 1;
+      logger.info(
+        `Initial page load failed (${errorDescription}), retry ${initialLoadRetries}/${INITIAL_LOAD_MAX_RETRIES}`,
+      );
+      setTimeout(() => {
+        if (win && !win.isDestroyed()) {
+          win.loadURL(validatedURL).catch((err) => {
+            logger.warn("Initial page reload failed: " + err.message);
+          });
+        }
+      }, 1000 * initialLoadRetries);
+    },
+  );
   // register ipc and socket handlers from helper modules
   const { registerIpc } = require("./src/main/ipc");
   const { initSocket } = require("./src/main/socket");
@@ -150,14 +224,23 @@ const createWindow = () => {
 
   // Set application menu (must be called after window is ready)
   _setMenu({ win, appRoot, app });
-  //  START: Link server
+  //  START: Link server (before the initial page load — the GUI URL is
+  // served by this server, see loadInitialPage above).
   const { startLink: _startLink } = require("./src/main/link");
-  link = _startLink({ win });
+  try {
+    link = _startLink({ win });
+  } catch (err) {
+    logger.warn("Link server failed to start: " + (err.message || err));
+    link = null;
+  }
+  loadInitialPage();
 };
 const syncGui = async (windowUpdate) => _syncGui(win, appRoot, windowUpdate);
 
 const syncLink = async (windowUpdate) => _syncLink(win, appRoot, windowUpdate);
 app.whenReady().then(async () => {
+  // Zombie second instance: quit was already requested, do nothing.
+  if (isSecondInstance) return;
   const {
     ensureArduinoDataDir,
     ensureAppDataDir,
@@ -178,24 +261,63 @@ app.whenReady().then(async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
+  // Don't race the initial page load: sync checks can navigate the window
+  // (update page) or relaunch the app, which at startup looks like the app
+  // never opened. Wait until the window finished loading (or timeout).
+  await new Promise((resolve) => {
+    if (!win || win.isDestroyed() || !win.webContents) return resolve();
+    let done = false;
+    const finish = () => {
+      if (!done) {
+        done = true;
+        resolve();
+      }
+    };
+    win.webContents.once("did-finish-load", finish);
+    win.webContents.once("did-fail-load", finish);
+    setTimeout(finish, 15000);
+  });
   await syncLibrary();
   await syncGui();
   await syncLink();
 });
 
 app.on("ready", async () => {
+  // Zombie second instance: quit was already requested, do nothing.
+  if (isSecondInstance) return;
+  // Windows app update via electron-updater (NSIS assisted installer).
+  // Skip entirely in dev: there is no app-update.yml / staged installer,
+  // and every background failure would otherwise pop a modal on `npm start`.
+  if (!app.isPackaged) {
+    logger.info("Skipping update check (dev mode)");
+    return;
+  }
+
+  // Guards so rapid successive events can't stack dialogs or downloads.
+  let isUpdateDialogOpen = false;
+  let isDownloadingUpdate = false;
+
+  // `yes`/`no` are not valid Electron options (only defaultId/cancelId).
+  // Parent to the main window so the prompt can't hide behind the
+  // maximized window on Windows.
+  const showUpdateMessageBox = (options) => {
+    const { yes, no, ...rest } = options;
+    const normalized = { ...rest, defaultId: 0, cancelId: 1 };
+    if (win && !win.isDestroyed()) {
+      return dialog.showMessageBox(win, normalized);
+    }
+    return dialog.showMessageBox(normalized);
+  };
+
   autoUpdater.on("update-available", () => {
     if (process.platform === "darwin") {
-      dialog
-        .showMessageBox({
-          type: "question",
-          title: "Update available",
-          message:
-            "Update is available, please download manually on the nomokit website",
-          buttons: ["Yes", "No"],
-          yes: 0,
-          no: 1,
-        })
+      showUpdateMessageBox({
+        type: "question",
+        title: "Update available",
+        message:
+          "Update is available, please download manually on the nomokit website",
+        buttons: ["Yes", "No"],
+      })
         .then((result) => {
           if (result.response === 0) {
             shell.openExternal("https://nomo-kit.com/download-macos");
@@ -203,70 +325,102 @@ app.on("ready", async () => {
         })
         .catch((err) => logger.warn("Update dialog error: " + err.message));
     } else {
-      dialog
-        .showMessageBox({
-          type: "question",
-          title: "Update available",
-          message: "Update Version is available",
-          buttons: ["Yes", "No"],
-          yes: 0,
-          no: 1,
-        })
+      if (isUpdateDialogOpen || isDownloadingUpdate) return;
+      isUpdateDialogOpen = true;
+      showUpdateMessageBox({
+        type: "question",
+        title: "Update available",
+        message: "Update Version is available",
+        buttons: ["Yes", "No"],
+      })
         .then((result) => {
-          if (result.response === 0) {
-            if (win && !win.isDestroyed()) {
-              win.loadFile(path.join(__dirname, "/src/update/index.html"));
-              autoUpdater.downloadUpdate();
-            }
+          isUpdateDialogOpen = false;
+          if (result.response !== 0) return;
+          isDownloadingUpdate = true;
+          if (win && !win.isDestroyed()) {
+            win
+              .loadFile(path.join(__dirname, "/src/update/index.html"))
+              .catch((err) =>
+                logger.warn("Update page load failed: " + err.message),
+              );
           }
+          // downloadUpdate() is async: catch rejections so a network
+          // failure can't leave the user stuck on the progress page.
+          autoUpdater.downloadUpdate().catch((err) => {
+            isDownloadingUpdate = false;
+            const msg = (err && err.message) || String(err);
+            logger.warn("Update download failed: " + msg);
+            dialog.showErrorBox("Update failed", msg);
+          });
         })
-        .catch((err) => logger.warn("Update dialog error: " + err.message));
+        .catch((err) => {
+          isUpdateDialogOpen = false;
+          logger.warn("Update dialog error: " + err.message);
+        });
     }
   });
   autoUpdater.on("update-downloaded", () => {
-    dialog
-      .showMessageBox({
-        type: "question",
-        title: "Update available",
-        message: "Update Version is downloaded, do you want to install now?",
-        buttons: ["Yes", "No"],
-        yes: 0,
-        no: 1,
-      })
+    isDownloadingUpdate = false;
+    if (isUpdateDialogOpen) return;
+    isUpdateDialogOpen = true;
+    showUpdateMessageBox({
+      type: "question",
+      title: "Update available",
+      message: "Update Version is downloaded, do you want to install now?",
+      buttons: ["Yes", "No"],
+    })
       .then(async (result) => {
-        if (result.response === 0) {
+        isUpdateDialogOpen = false;
+        // User declined: the staged file stays cached, and with
+        // autoInstallOnAppQuit=false nothing installs until next check.
+        if (result.response !== 0) return;
+        try {
           await cleanupBeforeInstallUpdate();
-          // Grab downloaded installer path from electron-updater.
-          const installerPath = autoUpdater.installerPath;
-          if (installerPath && fs.existsSync(installerPath)) {
-            // Spawn installer visible (no /S). NSIS shows progress UI.
-            // App must fully exit first so NSIS doesn't detect it running.
-            const { spawn } = require("child_process");
-            const child = spawn(installerPath, ["--updated", "--force-run"], {
-              detached: true,
-              stdio: "ignore",
-            });
-            child.unref();
-          }
-          // Force-kill this process so installer can overwrite files.
-          app.exit(0);
+        } catch (err) {
+          logger.warn("Update cleanup error: " + err.message);
+        }
+        try {
+          // quitAndInstall() passes the NSIS `--updated` flag so the
+          // assisted installer runs in update mode (no directory prompt,
+          // shortcuts fixed, single restart). Never spawn the installer
+          // manually: autoUpdater has no public `installerPath`, and a
+          // manual spawn + app.exit() races locked files.
+          isInstallingUpdate = true;
+          autoUpdater.quitAndInstall(false, true);
+        } catch (err) {
+          isInstallingUpdate = false;
+          const msg = (err && err.message) || String(err);
+          logger.warn("Update install failed: " + msg);
+          dialog.showErrorBox("Update failed", msg);
         }
       })
-      .catch((err) => logger.warn("Update dialog error: " + err.message));
+      .catch((err) => {
+        isUpdateDialogOpen = false;
+        logger.warn("Update dialog error: " + err.message);
+      });
   });
   autoUpdater.on("error", (err) => {
-    dialog.showErrorBox(
-      "Error: ",
-      err == null ? "unknown" : err.message || String(err),
-    );
-  });
-  autoUpdater.on("download-progress", (progressObj) => {
-    if (win && win.webContents && !win.isDestroyed()) {
-      win.webContents.send("download-progress", progressObj.percent);
+    const msg = err == null ? "unknown" : err.message || String(err);
+    logger.warn("Auto-update error: " + msg);
+    // Background failures (offline at startup, etc.) stay silent in the
+    // log. Only interrupt with a modal while a prompt is already open;
+    // download failures surface via the downloadUpdate() catch above.
+    isDownloadingUpdate = false;
+    if (isUpdateDialogOpen) {
+      dialog.showErrorBox("Update error", msg);
     }
   });
-  // Register all listeners before triggering the update check
-  autoUpdater.checkForUpdatesAndNotify();
+  autoUpdater.on("download-progress", (progressObj) => {
+    const raw = Number(progressObj && progressObj.percent);
+    const pct = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0;
+    if (win && win.webContents && !win.isDestroyed()) {
+      win.webContents.send("download-progress", Math.floor(pct * 10) / 10);
+    }
+  });
+  // autoDownload=false, so this is a manual check (not ...AndNotify).
+  autoUpdater.checkForUpdates().catch((err) => {
+    logger.warn("Update check failed: " + (err.message || String(err)));
+  });
 });
 
 app.on("window-all-closed", () => {
@@ -340,19 +494,10 @@ const cleanupBeforeInstallUpdate = async () => {
     logger.warn("Update cleanup python error: " + e.message);
   }
 
-  // Force close all windows to avoid close guards blocking updater.
-  try {
-    BrowserWindow.getAllWindows().forEach((w) => {
-      try {
-        w.removeAllListeners("close");
-        w.destroy();
-      } catch (_) {
-        // ignore per-window errors
-      }
-    });
-  } catch (e) {
-    logger.warn("Update cleanup window error: " + e.message);
-  }
+  // Do not destroy BrowserWindow here. quitAndInstall() handles window
+  // teardown and quit ordering. Destroying windows first fires
+  // window-all-closed -> app.quit() before the installer is spawned,
+  // which silently exits without launching the installer.
 };
 
 ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {

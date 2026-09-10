@@ -4,55 +4,15 @@
 ${StrRep}
 
 !macro preInit
-    ; --- LOGIKA MEMATIKAN APLIKASI LAMA (Dipindahkan ke preInit agar 100% tereksekusi) ---
-    SetDetailsPrint textonly
-    
-    ; Mengecek apakah file .exe utama aplikasi Anda sedang berjalan
-    nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
-    Pop $R0
-    
-    ${If} $R0 == 0
-      DetailPrint `Found running process ${APP_EXECUTABLE_FILENAME}. Attempting force close...`
-
-      StrCpy $R1 0
-      StrCpy $R2 6
-
-      kill_loop:
-        ; Melakukan force-kill beserta seluruh child-process (termasuk Python/Link Server)
-        nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}"`
-        Pop $R3
-        
-        Sleep 2000
-        
-        nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
-        Pop $R0
-        
-        ${If} $R0 != 0
-          DetailPrint `Process closed, continue installation...`
-          Goto check_done
-        ${EndIf}
-
-        IntOp $R1 $R1 + 1
-        ${If} $R1 < $R2
-          DetailPrint `Close attempt $R1/$R2 failed, retrying...`
-          Goto kill_loop
-        ${EndIf}
-
-        DetailPrint `Process still detected after retries. Continue without interactive retry dialog.`
-    ${EndIf}
-
-    check_done:
-    SetDetailsPrint none
-    ; --- AKHIR LOGIKA MEMATIKAN APLIKASI ---
-
-
     ; --- LOGIKA REGISTRY BAWAAN ANDA ---
     ${If} ${RunningX64}
         SetRegView 64
     ${EndIf}
 
-    WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomokit-Desktop"
-    WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomokit-Desktop"
+    ; NOTE: InstallLocation is managed by electron-builder from the actual
+    ; $INSTDIR (per-user install, directory is user-changeable). Do not
+    ; hardcode it here — a fixed path breaks update/uninstall when the
+    ; user installed elsewhere.
 
     ${StrRep} $0 "${UNINSTALL_REGISTRY_KEY}" "Software" "SOFTWARE"
     ${StrRep} $1 "${INSTALL_REGISTRY_KEY}" "Software" "SOFTWARE"
@@ -76,8 +36,12 @@ done:
 
 !macro customInstall
     ; Enable long path support for Arduino toolchain (avr-gcc, ld.exe)
-    ; Windows 10 1607+ requires this key + longPathAware manifest
+    ; Windows 10 1607+ requires this key + longPathAware manifest.
+    ; Best-effort only: per-user installs run asInvoker without HKLM
+    ; rights, and a failed write must never abort install/update.
+    ClearErrors
     WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
+    ClearErrors
 
     ; Copy bundled AVR core + tools (avr-gcc, avrdude, etc.) to dedicated data dir.
     ; These persist across app updates. Structure mirrors arduino-cli's package dir.
