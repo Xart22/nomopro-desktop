@@ -139,6 +139,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _lib_hash_parser_hoc_jsx__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ../lib/hash-parser-hoc.jsx */ "./src/lib/hash-parser-hoc.jsx");
 /* harmony import */ var _lib_log_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ../lib/log.js */ "./src/lib/log.js");
 /* harmony import */ var _lib_message_box_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(/*! ../lib/message-box.js */ "./src/lib/message-box.js");
+/* harmony import */ var buffer__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(/*! buffer */ "./node_modules/buffer/index.js");
+/* harmony import */ var buffer__WEBPACK_IMPORTED_MODULE_9___default = /*#__PURE__*/__webpack_require__.n(buffer__WEBPACK_IMPORTED_MODULE_9__);
 function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
 
 
@@ -151,8 +153,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
 
 
 
+
 var onClickLogo = function onClickLogo() {
-  window.location = "https://nomo-kit.com/";
+  window.location = "#";
 };
 
 var onClickCheckUpdate = function onClickCheckUpdate() {
@@ -260,6 +263,32 @@ var handleShowMessageBox = function handleShowMessageBox(type, message) {
 
   if (false) {}
 
+  var onVmInit = function onVmInit(vm) {
+    var prjPath = "";
+    var projectLoaded = false;
+    vm.runtime.on("PROJECT_LOADED", function () {
+      if (!projectLoaded) {
+        if (prjPath) {
+          fetch(prjPath).then(function (response) {
+            if (response.ok) {
+              return response.arrayBuffer();
+            } else {
+              console.error("Failed to fetch project: " + response.statusText);
+            }
+          }).then(function (arrayBuffer) {
+            if (arrayBuffer) {
+              projectLoaded = true;
+              vm.loadProject(arrayBuffer).catch(function (error) {
+                projectLoaded = false;
+                console.error("Failed to load project. " + error);
+              });
+            }
+          });
+        }
+      }
+    });
+  };
+
   react_dom__WEBPACK_IMPORTED_MODULE_1___default.a.render( // important: this is checking whether `simulateScratchDesktop` is truthy, not just defined!
   simulateScratchDesktop ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0___default.a.createElement(WrappedGui, {
     canEditTitle: true,
@@ -283,7 +312,8 @@ var handleShowMessageBox = function handleShowMessageBox(type, message) {
     backpackHost: backpackHost,
     canSave: false,
     onClickLogo: onClickLogo,
-    onShowMessageBox: handleShowMessageBox
+    onShowMessageBox: handleShowMessageBox,
+    onVmInit: onVmInit
   }), appTarget);
 });
 

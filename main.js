@@ -374,25 +374,23 @@ app.on("ready", async () => {
         // User declined: the staged file stays cached, and with
         // autoInstallOnAppQuit=false nothing installs until next check.
         if (result.response !== 0) return;
+        logger.info(
+          "[Update] installing: pid=" + process.pid +
+            ", windows=" + BrowserWindow.getAllWindows().length +
+            ", isInstallingUpdate=" + isInstallingUpdate,
+        );
         try {
           await cleanupBeforeInstallUpdate();
         } catch (err) {
           logger.warn("Update cleanup error: " + err.message);
         }
-        try {
-          // quitAndInstall() passes the NSIS `--updated` flag so the
-          // assisted installer runs in update mode (no directory prompt,
-          // shortcuts fixed, single restart). Never spawn the installer
-          // manually: autoUpdater has no public `installerPath`, and a
-          // manual spawn + app.exit() races locked files.
-          isInstallingUpdate = true;
-          autoUpdater.quitAndInstall(false, true);
-        } catch (err) {
-          isInstallingUpdate = false;
-          const msg = (err && err.message) || String(err);
-          logger.warn("Update install failed: " + msg);
-          dialog.showErrorBox("Update failed", msg);
-        }
+        isInstallingUpdate = true;
+        // Delegated to electron-updater: quitAndInstall(false, true) spawns
+        // the installer with "--updated --force-run". Its NsisUpdater handles
+        // EACCES from the perMachine installer (requires admin) by retrying
+        // via elevate.exe, then quits the app. Manual childProcess.spawn had
+        // no error listener -> uncaught EACCES + no elevation retry.
+        autoUpdater.quitAndInstall(false, true);
       })
       .catch((err) => {
         isUpdateDialogOpen = false;
@@ -468,11 +466,11 @@ const cleanupBeforeInstallUpdate = async () => {
   // Notify guarded update windows to bypass close prevention logic.
   app.emit("nomokit-force-close-update-windows");
 
-  // Stop socket reconnection loops during shutdown.
+  // disconnect first so internal reconnect-prevention state is intact
   try {
     if (socket) {
-      socket.removeAllListeners();
       socket.disconnect();
+      socket.removeAllListeners();
     }
   } catch (e) {
     logger.warn("Update cleanup socket error: " + e.message);
@@ -494,10 +492,17 @@ const cleanupBeforeInstallUpdate = async () => {
     logger.warn("Update cleanup python error: " + e.message);
   }
 
-  // Do not destroy BrowserWindow here. quitAndInstall() handles window
-  // teardown and quit ordering. Destroying windows first fires
-  // window-all-closed -> app.quit() before the installer is spawned,
-  // which silently exits without launching the installer.
+  // Destroy all windows to remove close guards before app.exit(0).
+  try {
+    BrowserWindow.getAllWindows().forEach((w) => {
+      try {
+        w.removeAllListeners("close");
+        w.destroy();
+      } catch (_) {}
+    });
+  } catch (e) {
+    logger.warn("Update cleanup window error: " + e.message);
+  }
 };
 
 ipcMain.handle("nomopro-python-run", async (event, { code, timeoutMs }) => {

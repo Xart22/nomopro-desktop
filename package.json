@@ -1,6 +1,6 @@
 {
   "name": "nomokit-desktop",
-  "version": "3.0.18",
+  "version": "3.0.19",
   "main": "main.js",
   "scripts": {
     "test": "node test/run-tests.js && node test/e2e/e2e-test-matrix.js",
@@ -46,7 +46,8 @@
       "!src/gui/**/*.map",
       "!test",
       "data/*.json*",
-      "!readme.md"
+      "!readme.md",
+      "!test"
     ],
     "win": {
       "publish": [
@@ -79,12 +80,10 @@
     "nsis": {
       "artifactName": "Nomokit-Desktop-${version}.${ext}",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
       "uninstallDisplayName": "Nomokit-Desktop-uninstaller",
       "installerIcon": "src/assets/img/nomokit.ico",
       "shortcutName": "Nomokit-Desktop",
       "runAfterFinish": true,
-      "perMachine": false,
       "include": "build/installer.nsh"
     },
     "extraResources": [
