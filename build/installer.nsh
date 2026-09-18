@@ -3,56 +3,47 @@
 !include StrFunc.nsh
 ${StrRep}
 
-!macro preInit
-    ; --- LOGIKA MEMATIKAN APLIKASI LAMA (Dipindahkan ke preInit agar 100% tereksekusi) ---
-    SetDetailsPrint textonly
-    
-    ; Mengecek apakah file .exe utama aplikasi Anda sedang berjalan
-    nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
-    Pop $R0
-    
-    ${If} $R0 == 0
-      DetailPrint `Found running process ${APP_EXECUTABLE_FILENAME}. Attempting force close...`
-
-      StrCpy $R1 0
-      StrCpy $R2 6
-
-      kill_loop:
-        ; Melakukan force-kill beserta seluruh child-process (termasuk Python/Link Server)
-        nsExec::Exec `taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}"`
-        Pop $R3
-        
-        Sleep 2000
-        
-        nsProcess::_FindProcess "${APP_EXECUTABLE_FILENAME}"
-        Pop $R0
-        
-        ${If} $R0 != 0
-          DetailPrint `Process closed, continue installation...`
-          Goto check_done
-        ${EndIf}
-
-        IntOp $R1 $R1 + 1
-        ${If} $R1 < $R2
-          DetailPrint `Close attempt $R1/$R2 failed, retrying...`
-          Goto kill_loop
-        ${EndIf}
-
-        DetailPrint `Process still detected after retries. Continue without interactive retry dialog.`
+; electron-builder runs CHECK_APP_RUNNING before install; when this macro
+; is defined it replaces the default taskkill logic. The default gives up
+; after 2 attempts (appCannotBeClosed dialog). Old app versions (<= 3.0.17)
+; have no single-instance lock, so a zombie Nomokit-Desktop.exe can survive
+; quitAndInstall(). Kill the whole process tree (child Electron/node procs)
+; and retry up to 15x before asking the user.
+!macro customCheckAppRunning
+  DetailPrint "Closing running Nomokit-Desktop processes..."
+  StrCpy $R1 0
+  ckar_loop:
+    IntOp $R1 $R1 + 1
+    ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
+    ${If} $R0 != 0
+      Goto ckar_done
     ${EndIf}
+    ; Graceful close first so renderer/GPU child processes exit on their own.
+    ; No /fi "USERNAME eq %USERNAME%" filter: when the installer runs
+    ; elevated (perMachine + allowElevation), %USERNAME% is the admin
+    ; account while the app belongs to the logged-in user, so the filter
+    ; matched nothing and taskkill never killed the app.
+    ${nsProcess::CloseProcess} "${APP_EXECUTABLE_FILENAME}" $R2
+    Sleep 1000
+    nsExec::ExecToLog `cmd /c taskkill /f /t /im "${APP_EXECUTABLE_FILENAME}"`
+    Sleep 800
+    ${If} $R1 < 15
+      Goto ckar_loop
+    ${EndIf}
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY ckar_retry
+    Quit
+  ckar_retry:
+    StrCpy $R1 0
+    Goto ckar_loop
+  ckar_done:
+    Sleep 300
+!macroend
 
-    check_done:
-    SetDetailsPrint none
-    ; --- AKHIR LOGIKA MEMATIKAN APLIKASI ---
-
-
+!macro preInit
     ; --- LOGIKA REGISTRY BAWAAN ANDA ---
     ${If} ${RunningX64}
         SetRegView 64
     ${EndIf}
-
-    WriteRegExpandStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomokit-Desktop"
-    WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "C:\Nomokit-Desktop"
 
     ${StrRep} $0 "${UNINSTALL_REGISTRY_KEY}" "Software" "SOFTWARE"
     ${StrRep} $1 "${INSTALL_REGISTRY_KEY}" "Software" "SOFTWARE"
@@ -74,10 +65,22 @@ done:
     ${EndIf}
 !macroend
 
+; Runs AFTER initMultiUser (installer.nsi .onInit), so it wins over the
+; per-user default $LOCALAPPDATA\Programs path. Fixes the dual-install bug:
+; perMachine:true forced PROGRAMFILES64 and left the old C:\Nomokit-Desktop
+; install behind. Path is now locked for every install/update.
+!macro customInit
+    StrCpy $INSTDIR "C:\Nomokit-Desktop"
+!macroend
+
 !macro customInstall
     ; Enable long path support for Arduino toolchain (avr-gcc, ld.exe)
-    ; Windows 10 1607+ requires this key + longPathAware manifest
+    ; Windows 10 1607+ requires this key + longPathAware manifest.
+    ; Best-effort only: per-user installs run asInvoker without HKLM
+    ; rights, and a failed write must never abort install/update.
+    ClearErrors
     WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Control\FileSystem" "LongPathsEnabled" 1
+    ClearErrors
 
     ; Copy bundled AVR core + tools (avr-gcc, avrdude, etc.) to dedicated data dir.
     ; These persist across app updates. Structure mirrors arduino-cli's package dir.
@@ -100,8 +103,9 @@ done:
         SetRegView 64
     ${EndIf}
 
-    DeleteRegKey HKLM "${INSTALL_REGISTRY_KEY}"
-    DeleteRegKey HKCU "${INSTALL_REGISTRY_KEY}"
+    ; Delete only this install scope's key. Deleting both HKLM+HKCU orphaned
+    ; the other install's uninstall entry when two scopes coexisted.
+    DeleteRegKey SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}"
 
     ${If} ${RunningX64}
         SetRegView LastUsed

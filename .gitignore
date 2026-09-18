@@ -10,3 +10,4 @@ python/
 build/avr-core/
 build/avr-staging/
 .worktrees/
+test/

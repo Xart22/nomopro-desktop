@@ -14,8 +14,12 @@ function getPythonExe() {
 
   // Bundled Python
   try {
-    const resourcesPy =
-      path.join(process.resourcesPath || __dirname, "..", "..", "python");
+    const resourcesPy = path.join(
+      process.resourcesPath || __dirname,
+      "..",
+      "..",
+      "python",
+    );
     if (fs.existsSync(resourcesPy)) {
       const pexe = path.join(resourcesPy, "python.exe");
       if (fs.existsSync(pexe)) candidates.push(pexe);
@@ -123,15 +127,20 @@ except ImportError:
  * Fallback entities extraction — pure JS, no Python needed.
  */
 function _entitiesFallback(text) {
-    const skip = new Set(["i", "the", "a", "an", "this", "that"]);
-    const words = text.split(/\s+/);
-    const found = [];
-    for (const w of words) {
-        if (w.length > 0 && w[0] === w[0].toUpperCase() && w[0] !== w[0].toLowerCase() && !skip.has(w.toLowerCase())) {
-            found.push({text: w, type: "PROPER_NOUN"});
-        }
+  const skip = new Set(["i", "the", "a", "an", "this", "that"]);
+  const words = text.split(/\s+/);
+  const found = [];
+  for (const w of words) {
+    if (
+      w.length > 0 &&
+      w[0] === w[0].toUpperCase() &&
+      w[0] !== w[0].toLowerCase() &&
+      !skip.has(w.toLowerCase())
+    ) {
+      found.push({ text: w, type: "PROPER_NOUN" });
     }
-    return JSON.stringify(found);
+  }
+  return JSON.stringify(found);
 }
 
 /**
@@ -299,7 +308,10 @@ function registerNlpHandlers() {
 
   ipcMain.handle("nlp:train", async (_event, label, examples) => {
     trainedIntents = trainedIntents.filter((i) => i.label !== label);
-    trainedIntents.push({ label, examples: Array.isArray(examples) ? examples : [examples] });
+    trainedIntents.push({
+      label,
+      examples: Array.isArray(examples) ? examples : [examples],
+    });
     return { success: true, total: trainedIntents.length };
   });
 
@@ -381,7 +393,8 @@ function registerNlpHandlers() {
   });
 
   ipcMain.handle("nlp:download-csv-template", async () => {
-    const csvContent = 'name,age,city\nAlice,25,New York\nBob,30,Los Angeles\nCharlie,22,Chicago\nDiana,28,Houston';
+    const csvContent =
+      "name,age,city\nAlice,25,New York\nBob,30,Los Angeles\nCharlie,22,Chicago\nDiana,28,Houston";
     const result = await dialog.showSaveDialog({
       title: "Download CSV Template",
       defaultPath: "nlp-template.csv",
@@ -396,6 +409,11 @@ function registerNlpHandlers() {
   });
 
   ipcMain.handle("nlp:download-csv", async (_event, data) => {
+    // Guard against undefined/empty payload — never write literal "undefined".
+    const content = typeof data === "string" && data !== "" ? data : "";
+    if (content === "") {
+      return { success: false, error: "no data" };
+    }
     const result = await dialog.showSaveDialog({
       title: "Download CSV File",
       defaultPath: "nlp-output.csv",
@@ -403,7 +421,7 @@ function registerNlpHandlers() {
     });
 
     if (!result.canceled && result.filePath) {
-      fs.writeFileSync(result.filePath, data, "utf-8");
+      fs.writeFileSync(result.filePath, content, "utf-8");
       return { success: true, path: result.filePath };
     }
     return { success: false };

@@ -1,6 +1,29 @@
 const noble = require('@abandonware/noble');
 const Session = require('./session');
 
+// electron-log writes to the nomopro.log file, which the user can always
+// open (unlike terminal stdout, which is invisible in the installed app).
+// Guarded: the link code must keep working even if electron-log is missing.
+let fileLogger = null;
+try {
+    fileLogger = require('electron-log');
+} catch (e) {
+    fileLogger = null;
+}
+
+const linkLog = msg => {
+    try {
+        if (fileLogger) fileLogger.info(msg);
+    } catch (e) {
+        // ignore logging failures
+    }
+    try {
+        console.log(msg);
+    } catch (e) {
+        // ignore logging failures
+    }
+};
+
 const getUUID = id => {
     if (typeof id === 'number') return id.toString(16);
     if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) {
@@ -184,11 +207,22 @@ class BLESession extends Session {
             const buffer = Buffer.from(message, encoding);
             const characteristic = await this.getEndpoint('write request', params, 'write');
             for (let i = 0; i < buffer.length; i += 20) {
-                await this.bleWriteData(characteristic, withResponse, buffer.slice(i, 20));
+                await this.bleWriteData(characteristic, withResponse, buffer.slice(i, i + 20));
             }
-            return buffer.length;
+            linkLog(`[BLE] write ok service=${params.serviceId} char=${params.characteristicId} ` +
+                `bytes=${buffer.length} data=${buffer.toString('hex')}`);
+            return {bytesWritten: buffer.length};
         } catch (err) {
-            return new Error(`Error while attempting to write: ${err.message}`);
+            // NOTE: returned as a *result* (not a JSONRPC error) on purpose:
+            // the VM surfaces it as a console warning without dropping the
+            // BLE connection. Keep shape {writeError} stable, VM depends on it.
+            const msg = `Error while attempting to write: ${(err && err.message) || err}`;
+            linkLog(`[BLE] ${msg} params=${JSON.stringify({
+                serviceId: params.serviceId,
+                characteristicId: params.characteristicId,
+                byteLength: params.message ? Buffer.from(params.message, params.encoding).length : 0
+            })}`);
+            return {writeError: String(msg)};
         }
     }
 
@@ -213,8 +247,9 @@ class BLESession extends Session {
             }
             return readedData;
         } catch (err) {
-            console.log('Error while attempting to read: ', err);
-            return new Error(`Error while attempting to read: ${err.message}`);
+            linkLog(`[BLE] Error while attempting to read: ${(err && err.message) || err} ` +
+                `service=${params.serviceId} char=${params.characteristicId}`);
+            return new Error(`Error while attempting to read: ${(err && err.message) || err}`);
         }
     }
 
@@ -308,7 +343,16 @@ class BLESession extends Session {
                     console.warn(err);
                     return reject(`could not find characteristic ${characteristicId} on service ${serviceUuid}`);
                 }
-                const characteristic = characteristics.find(item => item.properties.includes(type));
+                const characteristic = characteristics.find(item => {
+                    if (type === 'write') {
+                        // noble reports 'write' and 'writeWithoutResponse' as
+                        // distinct properties; accept either for a write request
+                        // (e.g. WeDo 2.0 OUTPUT_COMMAND may only expose one).
+                        return item.properties.includes('write') ||
+                            item.properties.includes('writeWithoutResponse');
+                    }
+                    return item.properties.includes(type);
+                });
                 if (characteristic) {
                     this.characteristics[characteristicId] = characteristic;
                     resolve(characteristic);
